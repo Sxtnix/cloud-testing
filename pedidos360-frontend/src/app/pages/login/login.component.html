@@ -1,0 +1,65 @@
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-logo">🛒</div>
+    <h1>Pedidos360</h1>
+    <p class="subtitle">La tienda de departamentos tecnológicos más simple y segura, con autenticación de Microsoft Entra ID.</p>
+
+    <ng-container *ngIf="!estaAutenticado">
+      <div class="login-features">
+        <div class="login-feature">
+          <span class="login-feature-icon">🔐</span>
+          <div class="login-feature-text">
+            <strong>Login seguro</strong>
+            Ingresa con tu cuenta institucional Microsoft
+          </div>
+        </div>
+        <div class="login-feature">
+          <span class="login-feature-icon">📦</span>
+          <div class="login-feature-text">
+            <strong>Catálogo completo</strong>
+            Tecnología, deportes, hogar y más
+          </div>
+        </div>
+        <div class="login-feature">
+          <span class="login-feature-icon">🛒</span>
+          <div class="login-feature-text">
+            <strong>Carrito de compras</strong>
+            Agrega productos y confirma tu pedido
+          </div>
+        </div>
+        <div class="login-feature">
+          <span class="login-feature-icon">🚀</span>
+          <div class="login-feature-text">
+            <strong>Arquitectura cloud-native</strong>
+            AWS + Azure + Angular y microservicios
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-microsoft" (click)="login()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 23 23">
+          <path fill="#f35325" d="M1 1h10v10H1z"/>
+          <path fill="#81bc06" d="M12 1h10v10H12z"/>
+          <path fill="#05a6f0" d="M1 12h10v10H1z"/>
+          <path fill="#ffba08" d="M12 12h10v10H12z"/>
+        </svg>
+        Iniciar sesión con Microsoft
+      </button>
+
+      <div class="alert alert-info" style="margin-top:24px; text-align:left;">
+        Se requiere una cuenta del mismo tenant de Azure Active Directory configurado en el proyecto.
+      </div>
+    </ng-container>
+
+    <ng-container *ngIf="estaAutenticado">
+      <div class="alert alert-success" style="text-align:left;">
+        ✅ Ya estás autenticado. Ve al catálogo para comenzar a comprar.
+      </div>
+      <button class="btn btn-primary btn-lg" routerLink="/catalogo">Ver catálogo →</button>
+      <p class="login-footer">Si la página en blanco persiste, revisa que el redirect URI en Azure sea exactamente <code>http://localhost:4200/</code> (plataforma SPA).</p>
+    </ng-container>
+
+    <div class="login-divider"></div>
+    <p class="login-footer">Proyecto Desarrollo Cloud Native I · DSY1107</p>
+  </div>
+</div>

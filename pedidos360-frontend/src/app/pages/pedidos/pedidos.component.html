@@ -1,0 +1,39 @@
+<div class="page-space">
+  <div class="section-header">
+    <h2>📦 Mis pedidos</h2>
+  </div>
+
+  <div *ngIf="error" class="alert alert-error">{{ error }}</div>
+
+  <div *ngIf="cargando" class="loading">
+    <div class="spinner"></div>
+    Cargando pedidos...
+  </div>
+
+  <div *ngIf="!cargando && pedidos.length === 0 && !error" class="empty-state">
+    <div class="empty-state-icon">📦</div>
+    <h3>Aún no tienes pedidos</h3>
+    <p>Cuando confirmes una compra desde tu carrito, verás aquí el historial de tus pedidos.</p>
+    <button class="btn btn-primary btn-lg" routerLink="/catalogo" style="margin-top:20px;">Ir al catálogo</button>
+  </div>
+
+  <div class="order-card" *ngFor="let pedido of pedidos">
+    <div class="order-header">
+      <div>
+        <span class="order-id">Pedido #{{ pedido.id }}</span>
+        <div class="order-date">{{ pedido.fecha | date:'EEEE d MMMM yyyy, h:mm a' }}</div>
+      </div>
+      <span class="order-badge" [ngClass]="'badge-' + (pedido.estado | lowercase)">{{ pedido.estado }}</span>
+    </div>
+
+    <div class="order-item" *ngFor="let item of pedido.items">
+      <span>{{ item.cantidad }} × {{ item.nombreProducto }}</span>
+      <span>${{ item.precioUnitario * item.cantidad | number }}</span>
+    </div>
+
+    <div class="order-total">
+      <span>Total</span>
+      <span>${{ pedido.total | number }}</span>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,49 @@
+<div class="page-space">
+  <div class="section-header">
+    <h2>🛒 Mi carrito</h2>
+  </div>
+
+  <div *ngIf="error" class="alert alert-error">{{ error }}</div>
+
+  <div *ngIf="cargando" class="loading">
+    <div class="spinner"></div>
+    Cargando carrito...
+  </div>
+
+  <ng-container *ngIf="!cargando && carrito">
+    <div *ngIf="carrito.items.length === 0" class="empty-state">
+      <div class="empty-state-icon">🛒</div>
+      <h3>Tu carrito está vacío</h3>
+      <p>Explora el catálogo y agrega productos para comenzar tu compra.</p>
+      <button class="btn btn-primary btn-lg" routerLink="/catalogo" style="margin-top:20px;">Ir al catálogo</button>
+    </div>
+
+    <ng-container *ngIf="carrito.items.length > 0">
+      <div class="card">
+        <div class="cart-item" *ngFor="let item of carrito.items">
+          <img class="cart-item-img" [src]="imagenDe(item.productoId)" alt="{{ item.nombreProducto }}">
+          <div class="cart-item-info">
+            <div class="cart-item-name">{{ item.nombreProducto }}</div>
+            <div class="cart-item-meta">{{ item.cantidad }} x ${{ item.precioUnitario | number }}</div>
+          </div>
+          <div style="font-weight:700;">${{ item.precioUnitario * item.cantidad | number }}</div>
+          <button class="btn btn-danger btn-sm" (click)="eliminarItem(item.id)">Quitar</button>
+        </div>
+      </div>
+
+      <div class="cart-summary">
+        <div class="cart-summary-row" *ngFor="let item of carrito.items">
+          <span>{{ item.nombreProducto }} × {{ item.cantidad }}</span>
+          <span>${{ item.precioUnitario * item.cantidad | number }}</span>
+        </div>
+        <div class="cart-summary-row cart-summary-total">
+          <span>Total</span>
+          <span>${{ total | number }}</span>
+        </div>
+        <button class="btn btn-accent btn-lg" [disabled]="procesandoCheckout" (click)="confirmarCompra()" style="width:100%; justify-content:center; margin-top:16px;">
+          {{ procesandoCheckout ? 'Procesando...' : 'Confirmar compra' }}
+        </button>
+      </div>
+    </ng-container>
+  </ng-container>
+</div>

@@ -1,0 +1,48 @@
+<div class="page-space">
+  <div class="hero">
+    <h1>Catálogo de productos</h1>
+    <p>Explora la mejor selección de tecnología, deportes y hogar. Inicia sesión y agrega a tu carrito con un clic.</p>
+  </div>
+
+  <div *ngIf="mensajeExito" class="alert alert-success">{{ mensajeExito }}</div>
+  <div *ngIf="error" class="alert alert-error">{{ error }}</div>
+
+  <div class="chip-bar">
+    <button class="chip" [class.active]="categoriaSeleccionada === null" (click)="filtrarCategoria(null)">Todas</button>
+    <button class="chip" *ngFor="let cat of categorias" [class.active]="categoriaSeleccionada === cat" (click)="filtrarCategoria(cat)">{{ cat }}</button>
+  </div>
+
+  <div *ngIf="cargando" class="loading">
+    <div class="spinner"></div>
+    Cargando catálogo...
+  </div>
+
+  <ng-container *ngIf="!cargando && productosFiltrados.length > 0">
+    <div class="product-grid">
+      <div class="product-card" *ngFor="let producto of productosFiltrados">
+        <img class="product-card-img" [src]="producto.imagenUrl || 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600&q=80'" alt="{{ producto.nombre }}" loading="lazy">
+        <div class="product-card-body">
+          <span class="product-card-category">{{ producto.categoria }}</span>
+          <h3 class="product-card-title">{{ producto.nombre }}</h3>
+          <p class="product-card-desc">{{ producto.descripcion }}</p>
+          <div class="product-card-stock">
+            <ng-container *ngIf="producto.stock > 0; else sinStock">✔ {{ producto.stock }} disponibles</ng-container>
+            <ng-template #sinStock>Sin stock</ng-template>
+          </div>
+          <div class="product-card-footer">
+            <span class="product-card-price">${{ producto.precio | number }}</span>
+            <button class="btn btn-primary" [disabled]="producto.stock <= 0" (click)="agregarAlCarrito(producto)">Agregar +</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </ng-container>
+
+  <div *ngIf="!cargando && productosFiltrados.length === 0 && !error" class="empty-state">
+    <div class="empty-state-icon">📭</div>
+    <h3>No hay productos</h3>
+    <p>No encontramos productos en esta categoría. Vuelve a intentarlo más tarde.</p>
+  </div>
+
+  <div *ngIf="toastVisible" class="toast">✅ {{ mensajeExito }}</div>
+</div>

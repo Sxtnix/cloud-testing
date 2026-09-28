@@ -1,0 +1,293 @@
+===============================================================================
+   GUIA DE DESPLIEGUE - PEDIDOS360  (AWS  +  Azure Entra ID)
+   Para: compañero que va a desplegar
+   Leer de arriba hacia abajo. Cada paso indica ARCHIVO EXACTO + QUÉ CAMBIAR.
+===============================================================================
+
+RESUMEN EN 30 SEGUNDOS
+-------------------------------------------------------------------------------
+Si usan el MISMO tenant de Azure que ya está en el código (lo normal):
+  [ ] 1. Azure Portal  -> registrar la URI de redirección pública      2 min
+  [ ] 2. environment.prod.ts -> URL del frontend + API Gateway          5 min
+  [ ] 3. 4 x SecurityConfig.java -> agregar el origen (CORS)            5 min
+  [ ] 4. .env en el servidor -> AUTH_BYPASS=false + MAIL_*              2 min
+  [ ] 5. docker-compose.yml -> revisar checklist                       5 min
+  [ ] 6. EC2 -> abrir puertos + "docker compose up -d --build"         10 min
+  [ ] 7. Verificar login + compra + correo                             5 min
+
+Si crean un tenant/registro de Azure NUEVO, además hacen los pasos marcados
+con  [NUEVO TENANT] .
+
+
+===============================================================================
+0. DATOS QUE YA ESTÁN EN EL CÓDIGO (no hay que buscarlos en otro lado)
+===============================================================================
+  Cliente ID (Azure):       bcb83cb2-3d6f-4715-b3e7-204237e6f53d
+  Tenant ID (Azure):        9150f81f-b0fc-436d-998d-dcb5cf883d2e
+  Scope (Exponer una API):  api://bcb83cb2-3d6f-4715-b3e7-204237e6f53d/write-read
+  Issuer que validan los 4 backends:
+                            https://login.microsoftonline.com/9150f81f-b0fc-436d-998d-dcb5cf883d2e/v2.0
+  URL API Gateway actual:   https://st3wqbtin7.execute-api.us-east-1.amazonaws.com/desarrollo
+  URL frontend (producción): https://44.200.146.153/   <- cambiar si cambia la IP/dominio
+
+  Los backends SOLO validan el issuer (tenant) de los tokens. No validan
+  audience, así que con el mismo tenant NO hay que tocar el backend por tema
+  de tenant.
+
+
+===============================================================================
+1. AZURE PORTAL  (Azure Portal -> Microsoft Entra ID -> Registros de aplicaciones)
+===============================================================================
+1.1  PLATAFORMA Y URIS DE REDIRECCIÓN  (siempre)
+     -> Autenticación -> Plataformas -> agregar/editar "Aplicación de página
+        única (SPA)" con estas URIs de redirección:
+            http://localhost:4200/          (pruebas locales)
+            https://44.200.146.153/         (producción -> la URL real del front)
+     -> Quitar cualquier URI que ya no aplique.
+     -> IMPORTANTE: Azure exige HTTPS para las URIs que no sean localhost.
+        Ver CHECKPOINT HTTPS en el paso 4.4.
+
+1.2  [NUEVO TENANT] EXponer la API:
+        - Exponer una API -> Application ID URI: api://<CLIENT_ID>
+        - Agregar ámbito -> nombre: write-read   (sin barra al inicio)
+        - Aplicaciones cliente autorizadas -> agregar <CLIENT_ID>
+          y marcar el permiso de cliente "write-read"
+
+1.3  [NUEVO TENANT] PERMISOS:
+        - Permisos de API -> Microsoft Graph -> User.Read (delegado)
+        - Dar "Otorgar consentimiento de administrador" para que no salga
+          la pantalla de consentimiento a cada usuario.
+
+1.4  [NUEVO TENANT] COPIAR:
+        - Application (client) ID  -> va en environment.prod.ts (paso 2.1)
+        - Directory (tenant) ID    -> va en environment.prod.ts (paso 2.1)
+                                      y en docker-compose.yml (paso 3.4)
+
+
+===============================================================================
+2. ARCHIVOS DEL FRONTEND A EDITAR
+===============================================================================
+
+2.1  *** pedidos360-frontend/src/environments/environment.prod.ts ***  (PRODUCCIÓN)
+     Este es EL archivo que importa: "npm run build" (y el build de Docker del
+     contenedor frontend) usa este archivo automáticamente.
+     Qué cambiar:
+       - línea 13  redirectUri        -> URL pública HTTPS del front
+                                         (hoy: https://44.200.146.153/)
+       - líneas 16-18  apiProductosUrl / apiIdentidadUrl / apiCarritoUrl
+                                         -> si reutilizan el API Gateway actual,
+                                         NO se tocan. Si crean uno nuevo, poner
+                                         la URL base nueva.
+       - [NUEVO TENANT] líneas 8-10 azureClientId / azureTenantId / azureApiScope
+                                         -> con los IDs nuevos.
+
+     Ejemplo final:
+         export const environment = {
+           production: true,
+           authBypass: false,                       // NUNCA true en producción
+           azureClientId: 'bcb83cb2-3d6f-4715-b3e7-204237e6f53d',
+           azureTenantId: '9150f81f-b0fc-436d-998d-dcb5cf883d2e',
+           azureApiScope: 'api://bcb83cb2-3d6f-4715-b3e7-204237e6f53d/write-read',
+           redirectUri: 'https://44.200.146.153/',
+           apiProductosUrl: 'https://st3wqbtin7.execute-api.us-east-1.amazonaws.com/desarrollo/productos',
+           apiIdentidadUrl: 'https://st3wqbtin7.execute-api.us-east-1.amazonaws.com/desarrollo/usuarios',
+           apiCarritoUrl:   'https://st3wqbtin7.execute-api.us-east-1.amazonaws.com/desarrollo/carrito'
+         };
+
+2.2  pedidos360-frontend/src/environments/environment.ts  (SOLO LOCAL)
+     -> No se usa en el build de producción. Dejarlo como está (localhost).
+        Si quieren probar en local con el mismo tenant nuevo: cambiar
+        azureClientId/azureTenantId/azureApiScope igual que en 2.1.
+
+
+===============================================================================
+3. ARCHIVOS DEL BACKEND A EDITAR
+===============================================================================
+
+3.1  *** CORS - OBLIGATORIO: agregar el origen del frontend ***  (4 archivos)
+     Si no se hace, el navegador bloquea TODAS las llamadas (error
+     "blocked by CORS policy") aunque el login funcione.
+
+     En cada archivo, buscar la línea "config.setAllowedOriginPatterns(List.of("
+     y agregar el origen del front (mismo valor que el redirectUri de 2.1):
+
+         config.setAllowedOriginPatterns(List.of(
+             "http://localhost:4200",
+             "http://localhost",
+             "http://127.0.0.1*",
+             "https://44.200.146.153"    // <-- AGREGAR (sin barra final)
+         ));
+
+     Archivos y líneas aproximadas:
+       - ms-productos/src/main/java/com/pedidos360/productos/config/SecurityConfig.java   (línea 54)
+       - ms-identidad/src/main/java/com/pedidos360/identidad/config/SecurityConfig.java   (línea 57)
+       - ms-carrito/src/main/java/com/pedidos360/carrito/config/SecurityConfig.java       (línea 58)
+       - ms-email/src/main/java/com/pedidos360/email/config/SecurityConfig.java           (línea 46)
+
+     Nota: al agregar una línea a un .java hay que RECONSTRUIR la imagen:
+        docker compose up -d --build ms-productos ms-identidad ms-carrito ms-email
+
+3.2  [NUEVO TENANT] ISSUER DE LOS BACKENDS - docker-compose.yml
+     Cambiar las 4 ocurrencias (líneas 24, 34, 44 y 59):
+
+         AZURE_ISSUER_URI: https://login.microsoftonline.com/<NUEVO_TENANT_ID>/v2.0
+
+     Con el mismo tenant: NO tocar nada.
+     Si corren los .jar SIN docker: exportar la variable AZURE_ISSUER_URI en el
+     entorno, o cambiar el valor por defecto en los 4 application.yml:
+         ms-*/src/main/resources/application.yml  (línea ~32/33/39)
+             issuer-uri: ${AZURE_ISSUER_URI:https://login.microsoftonline.com/<TENANT>/v2.0}
+
+3.3  *** .env  -> CREAR en la raíz del proyecto, EN EL SERVIDOR ***  (si no existe)
+     docker-compose.yml lo lee automáticamente:
+
+         AUTH_BYPASS=false
+
+         MAIL_HOST=smtp.gmail.com
+         MAIL_PORT=587
+         MAIL_USERNAME=correodelproyecto@gmail.com
+         MAIL_PASSWORD=xxxx xxxx xxxx xxxx     <-- app password de Gmail
+         MAIL_FROM=correodelproyecto@gmail.com
+
+     IMPORTANTE:
+       - AUTH_BYPASS=false en producción (el login de Azure queda ACTIVO).
+         Nunca subir true a un servidor.
+       - MAIL_PASSWORD va solo aquí; NUNCA en el código ni en git.
+
+3.4  *** docker-compose.yml - CHECKLIST COMPLETO ***
+     [ ] Líneas 25, 35, 45, 60  AUTH_BYPASS: ${AUTH_BYPASS:-false}
+                                 -> dejar EXACTAMENTE así (default false = seguro)
+     [ ] Líneas 24, 34, 44, 59  AZURE_ISSUER_URI -> solo si tenant nuevo (3.2)
+     [ ] Líneas 9-13  rabbitmq (usuario guest/guest + rabbitmq.conf)
+                                 -> OK para LOCAL. En AWS CAMBIAR credenciales:
+                                    RABBITMQ_DEFAULT_USER: <usuario>
+                                    RABBITMQ_DEFAULT_PASS: <clave fuerte>
+                                    y lo mismo en RABBITMQ_USERNAME/RABBITMQ_PASSWORD:
+                                      línea 47-48 (ms-carrito)
+                                      línea 62-63 (ms-email)
+     [ ] Líneas 6 y 7   puertos rabbitmq "5672:5672" y "15672:15672"
+                                 -> en AWS QUITARLOS o no abrirlos en el
+                                    Security Group (las apps se hablan por la
+                                    red interna de Docker; 15672 es la consola
+                                    de administración y NO debe ser pública)
+     [ ] Líneas 66-70   MAIL_* -> NO poner credenciales ahí; vienen del .env
+     [ ] Líneas 75-79   frontend -> build: ./pedidos360-frontend, puerto 80:80
+                                 -> ver CHECKPOINT HTTPS (4.4)
+
+3.5  (opcional) BASE DE DATOS
+     Por defecto usan H2 EN MEMORIA: los datos (productos, pedidos) se borran
+     en cada restart. Si quieren persistencia real: crear RDS/Postgres y
+     definir DB_URL / DB_USERNAME / DB_PASSWORD (ver README sección 3).
+
+
+===============================================================================
+4. AWS  (EC2 + API Gateway)
+===============================================================================
+
+4.1  SECURITY GROUP DE EC2 - abrir:
+       22      SSH
+       80      frontend
+       443     frontend HTTPS (si aplica)
+       8081-8083  integraciones del API Gateway
+     NO abrir:
+       5672 / 15672  (RabbitMQ - interno)
+       8084          (ms-email: no recibe tráfico público)
+       4200          (eso es el ng serve local, aquí no existe)
+     Nota: el puerto 18081 es un mapeo SOLO local del compañero; en EC2 es
+     el 8081 normal.
+
+4.2  API GATEWAY (AWS Console -> API Gateway -> tipo HTTP API)
+     Si reutilizan el existente (st3wqbtin7...): NO cambiar nada.
+     Si crean uno nuevo -> apuntar rutas a la IP pública de EC2:
+         /productos/...  ->  http://<EC2>:8081/...
+         /usuarios/...   ->  http://<EC2>:8082/...
+         /carrito/...    ->  http://<EC2>:8083/...
+         /pedidos/...    ->  http://<EC2>:8083/...
+         (ms-email NO necesita ruta pública)
+     Crear el stage (el actual se llama "desarrollo") -> copiar la URL base ->
+     pegarla en environment.prod.ts (paso 2.1) y listo.
+
+4.3  EN EL SERVIDOR EC2:
+         git clone <URL del repositorio>
+         cd desarrolloCloudNative-main-merged
+         nano .env                      # pegar contenido del paso 3.3
+         docker compose up -d --build
+     El frontend se compila DENTRO de Docker con "npm run build" = build de
+     PRODUCCIÓN -> usa environment.prod.ts automáticamente. Si después cambian
+     environment.prod.ts o un SecurityConfig, recuerden reconstruir:
+         docker compose up -d --build <servicio>
+
+4.4  CHECKPOINT HTTPS (revisar ANTES de prometer el login)
+     - El redirectUri de producción es https://... y Azure NO acepta http
+       salvo en localhost.
+     - El nginx del contenedor frontend solo escucha en el puerto 80 -> hace
+       falta algo delante que termine el TLS. Opciones:
+         a) Dominio + certificado (Let's Encrypt / nginx en el host / ALB)
+         b) Cloudflare Tunnel (gratuito, no abre puertos)
+         c) ALB de AWS con certificado ACM
+     - OJO: con IP pura (44.200.146.153) Let's Encrypt NO emite certificados.
+       Si no hay solución HTTPS todavía, el login de Azure va a fallar con
+       AADSTS50011 / error de conexión.
+
+
+===============================================================================
+5. VERIFICACIÓN POST-DESPLIEGUE  (checklist de 5 minutos)
+===============================================================================
+  [ ] Dentro de EC2:  curl http://localhost:8081/productos
+                      -> debe responder 401 (auth de Azure activa)
+  [ ] Abrir el frontend -> aparece pantalla de login de Microsoft
+  [ ] Iniciar sesión con la cuenta del tenant -> entra al catálogo
+  [ ] NOTA: el catálogo arranca VACÍO (el seed de 8 productos solo se activa
+      con AUTH_BYPASS=true y la BD es en memoria). Cargar productos a mano
+      (SQL/API) o definir DB_URL a una BD con datos.
+  [ ] Agregar producto al carrito -> "Confirmar pedido" -> 201 CONFIRMADO
+  [ ] En EC2:  docker compose logs ms-carrito | grep publicada
+               -> "Confirmación del pedido X publicada en la cola pedidos360.emails"
+  [ ] docker compose logs ms-email  -> mensaje recibido y procesado
+  [ ] Si MAIL_* está en .env: llega el correo al correo del comprador
+
+
+===============================================================================
+6. ERRORES COMUNES Y SU CAUSA
+===============================================================================
+  AADSTS50011 (error de redirección)
+      -> La URI pública no está registrada en Azure. Ver paso 1.1.
+
+  401 con WWW-Authenticate: Bearer error="invalid_token"
+      -> El token es de otro tenant: revisar AZURE_ISSUER_URI (3.2) y
+         azureTenantId (2.1) que coincidan con el tenant de Azure.
+
+  "Blocked by CORS policy" / falla solo en OPTIONS
+      -> Falta el origen del frontend en los 4 SecurityConfig.java (3.1).
+         Ojo: el origen es EXACTO (protocolo + host + puerto), sin barra final.
+
+  Funciona en local pero en AWS "no inicia sesión" / error de conexión
+      -> Falta HTTPS. Ver CHECKPOINT 4.4.
+
+  403/550 en los correos (Authentication failed / Bad credentials)
+      -> MAIL_PASSWORD malo o revocado. Generar otra "app password" de Gmail
+         y actualizar el .env:  docker compose up -d ms-email
+
+  El usuario entra pero no ve productos / no puede comprar
+      -> Revisar URL de API Gateway en environment.prod.ts (2.1) y volver a
+         construir el frontend.
+
+
+===============================================================================
+7. NO TOCAR / OJO
+===============================================================================
+  - authBypass (frontend) y AUTH_BYPASS (backend): TODO en false en
+    producción. Es una ayuda SOLO para pruebas locales sin Azure.
+    (Si algún día quieren local sin Azure: .env local AUTH_BYPASS=true +
+     authBypass: true en environment.ts, NUNCA en environment.prod.ts.)
+  - environment.ts = local | environment.prod.ts = despliegue.
+  - La carpeta "email/" del repo es código viejo que NO compila y NO forma
+    parte del despliegue (docker-compose no la usa). Ignorarla.
+  - Ninguna contraseña en el código ni en git: todo por .env o secretos.
+  - RabbitMQ consola (localhost:15672) usa guest/guest en LOCAL; en AWS
+    cambiar credenciales y no exponer el puerto (3.4).
+
+===============================================================================
+  Dudas: revisar también el README.md (secciones "Lo que falta configurar en
+  Azure/AWS antes de desplegar" y "Arquitectura").
+===============================================================================

@@ -1,0 +1,18 @@
+<nav class="navbar">
+  <a class="navbar-brand" routerLink="/">
+    <span class="icon">🛒</span>
+    Pedidos360
+  </a>
+
+  <div class="navbar-links" *ngIf="isAutenticado">
+    <a routerLink="/catalogo" routerLinkActive="active">Catálogo</a>
+    <a routerLink="/carrito" routerLinkActive="active">Carrito</a>
+    <a routerLink="/pedidos" routerLinkActive="active">Mis pedidos</a>
+  </div>
+
+  <div class="navbar-user">
+    <span *ngIf="isAutenticado">👋 {{ nombreUsuario }}</span>
+    <button *ngIf="!isAutenticado" class="btn btn-primary" (click)="login()">Iniciar sesión</button>
+    <button *ngIf="isAutenticado" class="btn btn-secondary" (click)="logout()">Cerrar sesión</button>
+  </div>
+</nav>
