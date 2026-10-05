@@ -1,0 +1,294 @@
+AYUDA.TXT — Pedidos360 (Segunda evaluación)
+==========================================
+
+Este archivo indica DÓNDE está (y DÓNDE buscar) todo lo implementado o
+modificado para la segunda evaluación, cómo arrancarlo y qué se probó.
+
+Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
+
+
+1. CÓMO ARRANCAR TODO (comandos exactos)
+----------------------------------------
+
+  Opción A — Docker (recomendada para la demo):
+
+      copy .env.example .env        # y completar MAIL_* si se quieren correos
+      docker compose up --build
+
+      Frontend:  http://localhost
+      RabbitMQ:  http://localhost:15672  (guest/guest)
+
+  Opción B — Sin Docker (procesos separados, pruebas locales):
+
+      # terminal 1..4 (PowerShell)
+      # DEFAULT: AUTH_BYPASS=false => login real con Microsoft Entra ID
+      cd ms-productos; mvn spring-boot:run                                  # 8081
+      cd ms-identidad; mvn spring-boot:run                                  # 8082
+      cd ms-carrito;   mvn spring-boot:run                                  # 8083
+      cd ms-email;     mvn spring-boot:run                                  # 8084
+      cd ms-pagos;     mvn spring-boot:run                                  # 8085
+
+      # Para probar SIN Azure (sin login de Microsoft), en cada terminal:
+      #     $env:AUTH_BYPASS='true'
+      # y además poner authBypass: true en src/environments/environment.ts
+      # (ese archivo es SOLO local; environment.prod.ts se queda en false).
+
+      # terminal 5: ms-productos también en 18081, porque es la URL que usa
+      # el frontend en local (src/environments/environment.ts)
+      cd ms-productos
+      mvn spring-boot:run "-Dspring-boot.run.arguments=--server.port=18081"
+
+      # terminal 6: frontend
+      cd pedidos360-frontend
+      npm install
+      npm start                                                              # 4200
+
+  Opción C — Solo el frontend contra microservicios ya levantados:
+      cd pedidos360-frontend; npx ng serve
+      (con authBypass: false hay que iniciar sesión con Microsoft antes de
+       abrir el catálogo, o "no cargan los productos")
+
+  Si el catálogo sale vacío: la siembra de 8 productos solo se hace con la
+  base VACIA (variable CATALOGO_SEED, por defecto true).
+
+
+2. MAPA: QUÉ PIDIÓ LA EVALUACIÓN → DÓNDE ESTÁ
+---------------------------------------------
+
+  Catálogo con imágenes, nombre, descripción, precio, stock, búsqueda y
+  categorías  ......................................  ms-productos
+      - entidades/atributos:   ms-productos/.../model/Producto.java  (imagenUrl)
+      - búsqueda con filtros:  ms-productos/.../service/ProductoService.java
+                               (buscar(nombre, categoria), normaliza tildes/mayúsculas)
+      - repositorio:           ms-productos/.../repository/ProductoRepository.java
+      - endpoints:             ms-productos/.../controller/ProductoController.java
+                               GET /productos?nombre=&categoria=
+                               GET /productos/categorias
+      - datos de ejemplo con fotos:
+                               ms-productos/.../config/DatosDeEjemplo.java
+
+  Carrito: agregar, cantidades, subtotales, total, vacío, validaciones
+  .................................................  ms-carrito + Angular
+      - modelo:                ms-carrito/.../model/Carrito.java, ItemCarrito.java
+      - lógica:                ms-carrito/.../service/CarritoService.java
+      - controller/errores:    ms-carrito/.../controller/CarritoController.java
+      - cliente de precios:    ms-carrito/.../integration/ProductoClient.java
+      - UI:                    pedidos360-frontend/src/app/pages/carrito/
+
+  Checkout + métodos de pago simulados (crédito, débito, transferencia)
+  ......................... ms-pagos + ms-carrito + Angular
+      - enums del pedido:      ms-carrito/.../model/MetodoPago.java
+                               ms-carrito/.../model/EstadoPago.java
+      - DTOs:                  ms-carrito/.../dto/CheckoutRequest.java
+                               ms-carrito/.../dto/PagoRequest.java
+      - creación del pedido:   CarritoService.checkout()      -> PENDIENTE_PAGO
+      - endpoint de pago:      POST /pedidos/{id}/pago  {simularRechazo}
+      - cliente de pagos:      ms-carrito/.../integration/PagoClient.java
+                               (reenvía el JWT del usuario a ms-pagos)
+      - **ms-pagos (microservicio separado, puerto 8085)**:
+                               ms-pagos/.../service/PagoService.java
+                                   decide APROBADO / RECHAZADO, 1 pago por pedido
+                               ms-pagos/.../model/Pago.java       (registro del pago)
+                               ms-pagos/.../controller/PagoController.java
+                                   POST /pagos
+                                   GET  /pagos/pedido/{id}
+      - aplicar el resultado:  CarritoService.procesarPago()
+                                   aprobado -> CONFIRMADO
+                                   rechazado -> CANCELADO + restaura carrito
+      - UI:                    pedidos360-frontend/src/app/pages/checkout/
+
+  Pedidos e historial: id, usuario, fecha, productos, precios, total,
+  método de pago, estado del pedido y estado del pago  ..  ms-carrito
+      - entidad:               ms-carrito/.../model/Pedido.java, ItemPedido.java
+      - estados:               ms-carrito/.../model/EstadoPedido.java
+      - historial:             GET /pedidos   y   GET /pedidos/{id}
+      - cambio de estado:      PUT /pedidos/{id}/estado  (transiciones validadas)
+      - UI:                    pedidos360-frontend/src/app/pages/pedidos/
+
+  Correos: registro de compra, pago aprobado, pago rechazado y cambio
+  de estado, sin duplicar ..............................  ms-carrito + ms-email
+      - publicación:           ms-carrito/.../messaging/EmailPublisher.java
+                               tipos: PEDIDO_REGISTRADO, PAGO_APROBADO,
+                                      PAGO_RECHAZADO, CAMBIO_ESTADO
+      - plantillas HTML:       ms-carrito/.../messaging/PlantillaEmails.java
+      - cola + DLQ:            ms-carrito/.../config/RabbitConfig.java
+                               ms-email/.../config/RabbitConfig.java
+                               (pedidos360.emails  ->  pedidos360.emails.dlq)
+      - consumidor y reintentos: ms-email/.../listener/EmailListener.java
+                               ms-email/.../service/EmailService.java
+      - configuración:         ms-email/src/main/resources/application.yml
+                               (spring.rabbitmq.listener.simple.*: 3 intentos)
+      - endpoint manual:       POST /emails/enviar
+
+  Rediseño del frontend (tienda comercial, responsive)  ...  Angular
+      - estilos globales:      pedidos360-frontend/src/styles.css
+      - navbar con buscador,
+        campana y contador:    .../pages/navbar/
+      - página principal:      .../pages/home/
+      - catálogo con chips:    .../pages/catalogo/
+      - carrito:               .../pages/carrito/
+      - checkout:              .../pages/checkout/
+      - pedidos:               .../pages/pedidos/
+      - login (MSAL):          .../pages/login/
+      - footer:                .../shared/footer.component.ts
+      - rutas:                 .../app.routes.ts
+      - raíz de la app:        .../app.component.ts
+      - modelos:               .../models/producto.model.ts, carrito.model.ts,
+                                pedido.model.ts, usuario.model.ts
+      - servicios:             .../services/producto.service.ts,
+                                carrito.service.ts, toast.service.ts,
+                                usuario.service.ts
+      - utilidades compartidas: .../shared/utilidades.ts
+
+  Notificaciones visuales (temporales) ..................  Angular
+      - mensajes toast:        pedidos360-frontend/src/app/services/toast.service.ts
+      - contenedor:            .../shared/toast-container.component.ts
+      - campana en la navbar:  .../pages/navbar/navbar.component.html
+      (NO es un sistema persistente: vive mientras la pestaña está abierta)
+
+  Seguridad: CORS, propiedad de pedidos/carrito, precios del backend
+  .....................................................  todos los servicios
+      - CORS con el origen desplegado https://44.200.146.153:
+          ms-productos/.../config/SecurityConfig.java
+          ms-identidad/.../config/SecurityConfig.java
+          ms-carrito/.../config/SecurityConfig.java
+          ms-pagos/.../config/SecurityConfig.java
+          ms-email/.../config/SecurityConfig.java
+      - 403 si un usuario toca el carrito o pedido de otro:
+          CarritoService.obtenerPedidoPropietario()
+      - el precio/stock SIEMPRE vienen de ms-productos (ProductoClient),
+        nunca del navegador.
+      - el resultado del pago SIEMPRE viene de ms-pagos (PagoClient),
+        ms-carrito solo aplica el estado sobre el pedido.
+
+  Docker y variables de entorno ........................  raíz del proyecto
+      - docker-compose.yml      (5 servicios + rabbitmq + frontend;
+                                 PRODUCTOS_SERVICE_URL, PAGOS_SERVICE_URL
+                                 y volúmenes carrito-data / pagos-data)
+      - .env.example            (plantilla segura, SIN credenciales)
+      - rabbitmq.conf, Dockerfile de cada servicio
+      - GUIA-DESPLIEGUE.txt     (despliegue en EC2)
+
+
+3. DÓNDE ESTÁN LAS PRUEBAS
+--------------------------
+
+  ms-productos  .../src/test/.../ProductoServiceTest.java      7 tests
+  ms-identidad  .../src/test/.../UsuarioServiceTest.java       2 tests
+  ms-carrito    .../src/test/.../CarritoServiceTest.java      21 tests
+                (precio del catálogo, stock, checkout, pago aprobado
+                 vía ms-pagos, pago rechazado + carrito restaurado,
+                 pago doble sin llamar a ms-pagos, ms-pagos caído,
+                 transiciones de estado, pedidos de otro usuario)
+  ms-pagos      .../src/test/.../PagoServiceTest.java          8 tests
+                (aprobado, rechazado + motivo, pago duplicado,
+                 monto/pedido/método inválidos, consulta por pedido)
+  ms-email      .../src/test/.../EmailServiceTest.java          4 tests
+                .../src/test/.../EmailListenerTest.java         4 tests  (10 en total)
+
+  Ejecutar TODOS (Windows, sin Maven instalado en el equipo):
+
+      $env:JAVA_HOME='C:\Users\Sxtnix\AppData\Local\Temp\opencode\tools\jdk-17.0.20.1+1'
+      $env:Path="$env:JAVA_HOME\bin;C:\Users\Sxtnix\AppData\Local\Temp\opencode\tools\apache-maven-3.9.9\bin;$env:Path"
+      cd ms-productos; mvn test     # y lo mismo en ms-identidad, ms-carrito, ms-pagos, ms-email
+
+  Frontend:
+
+      cd pedidos360-frontend; npx ng build
+
+
+4. QUÉ SE VERIFICÓ Y QUÉ NO  (sin inventar resultados)
+------------------------------------------------------
+
+  VERIFICADO (compilación + tests + prueba manual sobre servicios levantados):
+    - mvn test en los 5 microservicios: 48 tests, 0 fallos.
+    - npx ng build: compila sin errores.
+    - Catálogo: imágenes, filtros combinados y sin distinguir tildes
+      (?categoria=Tecnologia encuentra "Tecnología").
+    - Carrito: acumula ítems, cantidades, precios tomados del catálogo
+      (se ignora el precio enviado por el navegador), stock validado.
+    - Checkout: crea pedido PENDIENTE_PAGO y vacía el carrito.
+    - Pago aprobado  -> CONFIRMADO / APROBADO.
+    - Pago rechazado -> CANCELADO / RECHAZADO y carrito restaurado.
+    - Pago doble     -> 400.
+    - El pago pasa por ms-pagos (servicio separado en 8085): el registro se
+      consulta con GET /pagos/pedido/{id}; si ms-pagos no responde, el pago
+      NO se aprueba a ciegas (ms-carrito devuelve error).
+    - PUT /pedidos/{id}/estado -> transiciones válidas OK y no válidas 400.
+    - GET /pedidos devuelve historial con imágenes y método de pago.
+    - CORS respondiendo con el origen del frontend.
+    - Los 4 eventos de correo se intentan publicar y, sin RabbitMQ,
+      la compra NO falla (solo se registra el error en el log).
+
+  VERIFICADO CON docker compose up -d --build (2026-10-02, Docker Desktop + WSL2):
+    - Los 7 contenedores levantan: rabbitmq, los 5 microservicios y el
+      frontend (nginx en http://localhost/), con catálogo sembrado (8 productos).
+    - Compra completa sobre el stack aprobada (CONFIRMADO/APROBADO con
+      registro en ms-pagos), pago doble 400 y rechazo CANCELADO/RECHAZADO
+      con el carrito restaurado.
+    - RabbitMQ end-to-end: ms-carrito publica y ms-email consume
+      (4 publicados / 4 entregados, conexiones "guest" desde Docker).
+    - Sin credenciales SMTP: 3 reintentos y luego pedidos360.emails.dlq
+      (retry + dead-letter funcionando de punta a punta).
+    - El ng serve local (4200) sigue sirviendo la app contra esos contenedores.
+
+  NO VERIFICADO (falta configuración real, no del código):
+    - Envío real de correos por SMTP: falta una app password en .env.
+    - Login real con Microsoft Entra ID: la app MSAL quedó configurada
+      (client/tenant/scope en src/environments/environment*.ts) pero no se
+      pudo ejecutar el flujo en esta máquina: requiere cuenta del tenant
+      registrado y la URI http://localhost:4200/ en Azure. El modo sin Azure
+      (AUTH_BYPASS=true) sí está probado.
+    - Aislamiento entre usuarios por HTTP: probado con pruebas unitarias
+      (AccessDeniedException), ya que el modo local usa un único usuario sintético.
+
+
+5. CÓMO PROBAR EL FLUJO DE COMPRA (demo de la evaluación)
+----------------------------------------------------------
+
+  0. Si authBypass está en false: "Iniciar sesión con Microsoft" (cuenta del
+     tenant 9150f81f-...) ANTES de abrir el catálogo.
+  1. Abrir la tienda y ir al Catálogo.
+  2. Agregar 2 productos (aparece un toast y el contador del carrito).
+  3. Carrito -> stepper de cantidades -> "Continuar al checkout".
+  4. Elegir método de pago y completar la tarjeta de prueba
+     4111 1111 1111 1111 / 12/30 / 123  (solo en el navegador).
+  5. "Confirmar y pagar" -> resultado: pago aprobado.
+  6. "Mis pedidos" -> expandir: fecha, método de pago, estados y productos.
+  7. Repetir con "Modo demo: simular pago rechazado" para ver el error
+     (pedido cancelado + carrito restaurado).
+
+  Variante por API (para mostrar estados logísticos):
+
+      curl -X PUT http://localhost:8083/pedidos/1/estado \
+           -H "Content-Type: application/json" -d "{\"estado\":\"EN_PREPARACION\"}"
+      # luego "ENVIADO" y "ENTREGADO"; una transición inválida devuelve 400.
+
+
+6. LÍMITES QUE CONVIENE ACLARAR
+-------------------------------
+
+  - El pago es SIMULADO (lo decide ms-pagos): no hay pasarela bancaria ni
+    datos reales de tarjeta.
+  - Las notificaciones de la campana son temporales (no hay backend de
+    notificaciones persistente).
+  - Sin credenciales SMTP no llegan correos: queda en la cola/reintentos/DLQ.
+  - Por defecto la base es H2; en docker-compose usa volúmenes (carrito-data
+    y pagos-data) para que pedidos y pagos sobrevivan a reinicios.
+
+
+7. DESPLIEGUE EN AWS / CAMBIO DE TENANT (para Tomy)
+----------------------------------------------------
+
+  El paso a paso completo está en GUIA-DESPLIEGUE.txt (raíz del proyecto):
+    - Sección 0.1: tabla ARCHIVO -> LÍNEA EXACTA donde pegar un client ID
+      o tenant ID nuevos si Tomy crea su propio registro en Azure.
+    - Secciones 1 a 4: Azure Portal, frontend, backend (CORS/issuer), EC2.
+    - Sección 5: checklist de verificación (login + compra + correo).
+    - Sección 6: errores comunes (AADSTS50011, 401 invalid_token, CORS...).
+
+  Archivos que contienen los IDs de Azure:
+    pedidos360-frontend/src/environments/environment.prod.ts   (producción)
+    pedidos360-frontend/src/environments/environment.ts        (local)
+    docker-compose.yml   (4 x AZURE_ISSUER_URI)   y   .env
+    ms-*/src/main/resources/application.yml       (issuer-uri por defecto)

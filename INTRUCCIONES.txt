@@ -1,0 +1,593 @@
+# SEGUNDA EVALUACIÓN — PEDIDOS360
+
+## Ampliación, integración y mejora del proyecto Cloud Native
+
+Actúa como un desarrollador Full Stack senior especializado en Java Spring Boot, Angular, microservicios, RabbitMQ, Docker, Azure y diseño UI/UX.
+
+Tu objetivo es trabajar directamente sobre el repositorio existente `cloud-testing-main`, correspondiente al proyecto Pedidos360, para preparar la segunda evaluación académica.
+
+No quiero que reconstruyas el proyecto desde cero. Necesito que aproveches el trabajo de la primera evaluación, mantengas las funcionalidades existentes y completes las nuevas características que se requieren.
+
+**IMPORTANTE: primero revisa el repositorio real y sus archivos. No supongas que las funcionalidades están terminadas solo porque aparecen documentadas en el README.**
+
+---
+
+## 1. CONTEXTO Y ARQUITECTURA EXISTENTE
+
+El proyecto Pedidos360 es una tienda online desarrollada con una arquitectura Cloud Native basada en microservicios.
+
+Tecnologías identificadas en el proyecto:
+
+* Frontend: Angular 17 con componentes standalone.
+* Backend: Java 17 y Spring Boot 3.2.
+* Persistencia: Spring Data JPA y MySQL, según la configuración existente.
+* Autenticación: Azure Entra ID y MSAL Angular.
+* Mensajería: RabbitMQ.
+* Correos: Spring Mail mediante SMTP.
+* Contenedores: Docker y Docker Compose.
+* Infraestructura prevista: AWS EC2 y API Gateway.
+
+Actualmente existen cuatro microservicios:
+
+**`ms-productos`**
+
+* Catálogo de productos.
+* Consulta de productos.
+* Operaciones CRUD disponibles.
+
+**`ms-identidad`**
+
+* Perfil de usuarios.
+* Integración con la identidad de Azure.
+* Consulta de información del usuario autenticado.
+
+**`ms-carrito`**
+
+* Administración del carrito.
+* Agregar y eliminar productos.
+* Checkout.
+* Generación de pedidos.
+* Historial de compras.
+
+**`ms-email`**
+
+* Envío de correos mediante SMTP.
+* Consumo de mensajes desde RabbitMQ.
+* Envío asíncrono de confirmaciones de compra.
+* Endpoint de envío manual para pruebas.
+
+También existe un frontend Angular con estas páginas:
+
+* Login.
+* Catálogo.
+* Carrito.
+* Pedidos.
+* Barra de navegación.
+
+Respeta esta arquitectura y conserva los cuatro microservicios. No agregues un quinto microservicio sin una justificación técnica y académica clara.
+
+---
+
+## 2. OBJETIVO GENERAL
+
+Completar y mejorar Pedidos360 para que funcione como una tienda online realista, moderna y demostrable.
+
+El flujo principal esperado es:
+
+1. El usuario accede a la tienda.
+2. Explora el catálogo.
+3. Inicia sesión.
+4. Agrega productos al carrito.
+5. Modifica las cantidades y revisa el total.
+6. Continúa al checkout.
+7. Selecciona un método de pago.
+8. Confirma la compra.
+9. Se registra el pedido.
+10. Se procesa el pago simulado.
+11. Se envía una confirmación por correo electrónico.
+12. El usuario consulta sus pedidos y sus estados.
+
+El sistema debe integrar correctamente frontend, backend, persistencia, autenticación, mensajería y notificaciones por email.
+
+---
+
+## 3. GESTIÓN DE PRODUCTOS
+
+Revisa la implementación actual de `ms-productos` y completa las funcionalidades necesarias.
+
+El catálogo debe permitir:
+
+* Consultar los productos disponibles.
+* Visualizar imágenes.
+* Mostrar nombre, descripción y precio.
+* Buscar productos por nombre.
+* Filtrar por categoría cuando los datos existentes lo permitan.
+* Consultar detalles.
+* Mostrar disponibilidad cuando exista información de stock.
+
+Integra todas las operaciones con el backend real.
+
+Mejora la presentación de los productos en el frontend mediante tarjetas visuales y una distribución adecuada.
+
+No inventes endpoints ni campos sin revisar primero las entidades, controladores y servicios existentes.
+
+---
+
+## 4. CARRITO DE COMPRAS
+
+Revisa `ms-carrito` y el componente Angular del carrito.
+
+Implementa o completa:
+
+* Agregar productos.
+* Aumentar y disminuir cantidades.
+* Eliminar productos.
+* Calcular subtotales.
+* Calcular el total general.
+* Mostrar el contenido actualizado.
+* Evitar cantidades inválidas.
+* Evitar confirmar compras con el carrito vacío.
+* Mostrar correctamente el estado de un carrito vacío.
+
+Asegura que el frontend esté sincronizado con el backend.
+
+El carrito debe mantener su información de acuerdo con el usuario autenticado y la lógica de persistencia existente.
+
+---
+
+## 5. MÉTODOS DE PAGO
+
+Esta es una de las principales funcionalidades que debemos incorporar.
+
+Implementa una nueva etapa de checkout con una interfaz profesional y fácil de utilizar.
+
+Métodos de pago que se mostrarán:
+
+* Tarjeta de crédito.
+* Tarjeta de débito.
+* Transferencia bancaria.
+
+Para el alcance académico, utiliza pagos simulados, sin conectarse a servicios bancarios reales.
+
+El sistema debe:
+
+* Mostrar el resumen de la compra.
+* Permitir seleccionar un método de pago.
+* Mostrar el total que se pagará.
+* Permitir confirmar el pago.
+* Procesar una respuesta simulada de aprobación o rechazo.
+* Mostrar mensajes de éxito o error.
+* Evitar múltiples confirmaciones accidentales.
+* Actualizar el estado correspondiente del pedido.
+
+Revisa primero cómo está implementado el checkout actual. Integra el pago en ese flujo sin duplicar la generación de pedidos.
+
+Define claramente el momento en que se crea y confirma el pedido. Evita marcar una compra como pagada si el pago simulado fue rechazado.
+
+No solicites ni almacenes datos bancarios reales.
+
+---
+
+## 6. PEDIDOS E HISTORIAL DE COMPRAS
+
+Actualmente los pedidos se gestionan dentro de `ms-carrito`.
+
+No crees otro microservicio de pedidos por defecto. Amplía la implementación existente y evalúa si es necesario reorganizar internamente sus responsabilidades.
+
+Cada pedido debe conservar:
+
+* Identificador.
+* Usuario asociado.
+* Fecha de compra.
+* Productos.
+* Cantidades.
+* Precios al momento de la compra.
+* Total.
+* Método de pago.
+* Estado del pedido.
+* Estado del pago.
+
+Estados sugeridos:
+
+* Pendiente de pago.
+* Pagado.
+* En preparación.
+* Enviado.
+* Entregado.
+* Cancelado.
+
+Adapta los estados a la estructura actual y evita cambios incompatibles innecesarios.
+
+En el frontend, la sección de pedidos debe permitir:
+
+* Consultar el historial.
+* Ver los detalles de una compra.
+* Consultar la fecha.
+* Visualizar el total.
+* Consultar el método de pago.
+* Ver el estado del pedido y del pago.
+
+Los pedidos deben mantenerse persistidos y asociados correctamente al usuario.
+
+---
+
+## 7. SISTEMA DE CORREOS ELECTRÓNICOS
+
+**IMPORTANTE: ya tenemos implementado `ms-email`. No reemplaces este servicio ni crees otro sistema de correos paralelo.**
+
+Actualmente:
+
+* `ms-carrito` dispone de un `EmailPublisher`.
+* RabbitMQ utiliza la cola `pedidos360.emails`.
+* `ms-email` consume los mensajes.
+* `EmailService` utiliza SMTP.
+* Existe un endpoint manual `POST /emails/enviar`.
+* Se publican confirmaciones de compra de forma asíncrona.
+
+Primero audita esta implementación y verifica qué partes funcionan realmente.
+
+Después, amplía el sistema para cubrir los nuevos eventos del proceso de compra.
+
+Correos que deberían poder enviarse:
+
+* Confirmación de compra.
+* Confirmación de pago aprobado.
+* Aviso de pago rechazado, si corresponde.
+* Actualización de estado del pedido, cuando se implemente esa funcionalidad.
+
+Evita enviar dos correos idénticos por el mismo evento.
+
+Utiliza mensajes claros y profesionales, preferentemente con plantillas HTML sencillas si resulta compatible con la estructura actual.
+
+Los correos deben incluir, cuando corresponda:
+
+* Nombre del cliente.
+* Número de pedido.
+* Fecha.
+* Detalle de productos.
+* Total.
+* Método de pago.
+* Estado del pedido.
+
+Mantén RabbitMQ como mecanismo de comunicación asíncrona.
+
+El envío de correos no debe provocar que una compra ya registrada falle si el servidor SMTP está temporalmente fuera de servicio.
+
+Revisa los logs, las excepciones, los reintentos y la configuración de la cola. Si es viable, mejora la gestión de mensajes fallidos mediante reintentos acotados o una cola de respaldo.
+
+Las credenciales SMTP deben continuar utilizando variables de entorno y nunca deben quedar expuestas en el repositorio.
+
+Documenta cómo probar los correos en un entorno local sin credenciales reales.
+
+---
+
+## 8. REDISEÑO DEL FRONTEND
+
+Esta parte es prioritaria.
+
+Quiero que el frontend parezca una tienda online comercial, no un panel administrativo ni una plantilla básica de estudiante.
+
+Utiliza el frontend actual de Angular y conserva la integración con MSAL.
+
+Diseña una experiencia moderna, limpia, intuitiva y responsive.
+
+### Página principal
+
+Incorpora:
+
+* Navbar moderna.
+* Nombre y logotipo de Pedidos360.
+* Buscador.
+* Acceso al catálogo.
+* Acceso al carrito con contador.
+* Acceso a pedidos.
+* Perfil o inicio de sesión.
+* Icono de notificaciones o mensajes.
+* Banner principal.
+* Productos destacados.
+* Categorías, cuando estén disponibles.
+* Ofertas, si existen datos reales para mostrarlas.
+* Footer con información básica.
+
+### Catálogo
+
+Mejora la presentación con:
+
+* Tarjetas de productos.
+* Imágenes.
+* Nombre.
+* Precio.
+* Descripción.
+* Disponibilidad.
+* Botón para agregar al carrito.
+* Buscador funcional.
+* Filtros disponibles.
+* Mensajes de carga y error.
+
+### Login
+
+Rediseña la pantalla de inicio de sesión:
+
+* Presentación profesional.
+* Formulario claro.
+* Botones visibles.
+* Mensajes de error.
+* Estados de carga.
+* Integración con el mecanismo de autenticación actual.
+
+No elimines MSAL ni implementes una autenticación alternativa incompatible con Azure.
+
+### Carrito
+
+Diseña una vista que muestre:
+
+* Productos seleccionados.
+* Imágenes.
+* Cantidades.
+* Precios.
+* Subtotales.
+* Total.
+* Acciones para editar y eliminar.
+* Botón de checkout.
+* Estado vacío atractivo.
+
+### Checkout
+
+Implementa una pantalla de compra con:
+
+* Resumen del pedido.
+* Selección del método de pago.
+* Total.
+* Confirmación.
+* Indicadores de procesamiento.
+* Mensajes de resultado.
+
+### Pedidos
+
+Mejora la pantalla actual:
+
+* Historial organizado.
+* Identificador.
+* Fecha.
+* Total.
+* Método de pago.
+* Estado.
+* Acceso a los detalles.
+
+### Diseño general
+
+Utiliza:
+
+* Una paleta de colores consistente.
+* Tipografía legible.
+* Espaciados adecuados.
+* Componentes reutilizables.
+* Iconografía coherente.
+* Efectos hover discretos.
+* Diseño adaptable a escritorio, tablet y móvil.
+* Estados vacíos bien diseñados.
+* Formularios accesibles.
+* Notificaciones visuales de éxito y error.
+
+Utiliza el frontend de `devops-main` como referencia visual si está disponible en el entorno, pero adapta sus componentes a Pedidos360.
+
+No reemplaces el proyecto Angular por React ni cambies el framework existente.
+
+---
+
+## 9. NOTIFICACIONES EN LA INTERFAZ
+
+Además de los correos electrónicos, evalúa la posibilidad de incorporar notificaciones visuales internas.
+
+Estas pueden implementarse dentro del frontend o mediante una funcionalidad sencilla del backend, según la arquitectura disponible.
+
+Como mínimo, muestra mensajes inmediatos cuando:
+
+* Se agrega un producto al carrito.
+* Se confirma una compra.
+* Se aprueba o rechaza el pago.
+* Se produce un error durante el checkout.
+
+No afirmes que existe un sistema persistente de notificaciones internas si solo se implementan mensajes temporales en pantalla.
+
+Si el tiempo lo permite, agrega una campana con un listado de notificaciones y estados de lectura, pero prioriza el flujo completo de compra y el envío de correos.
+
+---
+
+## 10. INTEGRACIÓN Y SEGURIDAD
+
+Audita la integración entre los cuatro microservicios.
+
+Comprueba:
+
+* URLs de los servicios.
+* Puertos.
+* Endpoints.
+* Tokens.
+* Autorización.
+* Variables de entorno.
+* CORS.
+* Manejo de errores.
+* Comunicación con RabbitMQ.
+* Persistencia de los pedidos.
+* Identificación del usuario.
+
+Evita que un usuario pueda consultar o modificar pedidos pertenecientes a otro.
+
+Valida las operaciones tanto en el frontend como en el backend.
+
+No confíes únicamente en el total enviado por el frontend. Revisa cómo se calculan los precios en el backend y evita aceptar importes manipulados.
+
+Mantén la configuración de autenticación actual y conserva el modo de prueba local si ya existe.
+
+---
+
+## 11. DOCKER Y EJECUCIÓN
+
+Revisa el `docker-compose.yml` actual.
+
+El proyecto ya contempla:
+
+* RabbitMQ.
+* `ms-productos`.
+* `ms-identidad`.
+* `ms-carrito`.
+* `ms-email`.
+* Frontend Angular.
+
+Verifica que todos los servicios puedan iniciarse correctamente y que las dependencias estén configuradas.
+
+Revisa:
+
+* Dockerfiles.
+* Puertos.
+* Redes.
+* Variables de entorno.
+* Conexiones.
+* Persistencia.
+* Dependencias de RabbitMQ.
+* Configuración de Nginx.
+
+No elimines servicios ni cambies configuraciones funcionales sin una razón clara.
+
+El objetivo es poder ejecutar el sistema de forma coordinada mediante:
+
+`docker compose up --build`
+
+Documenta las variables de entorno que deban configurarse y proporciona un ejemplo seguro de archivo `.env`, sin credenciales reales.
+
+---
+
+## 12. PRUEBAS
+
+No des por terminado el trabajo solo por escribir código.
+
+Ejecuta las pruebas disponibles y agrega las necesarias para las funcionalidades nuevas.
+
+Verifica:
+
+* Compilación de Angular.
+* Compilación de cada microservicio.
+* Pruebas unitarias.
+* Configuración de Docker Compose.
+* Inicio de los servicios.
+* Consulta del catálogo.
+* Agregado y eliminación de productos del carrito.
+* Checkout.
+* Pago simulado.
+* Persistencia del pedido.
+* Historial de compras.
+* Publicación y consumo de mensajes RabbitMQ.
+* Envío de correo cuando exista configuración SMTP.
+* Manejo de errores.
+
+Comprueba el flujo completo de compra de principio a fin.
+
+Si no puedes ejecutar alguna prueba por falta de credenciales, servicios externos o herramientas, indícalo claramente. No inventes resultados.
+
+---
+
+## 13. METODOLOGÍA DE TRABAJO
+
+Trabaja en este orden:
+
+### Fase 1: Auditoría
+
+* Examina todos los archivos.
+* Revisa el código de los cuatro microservicios.
+* Revisa los componentes Angular.
+* Identifica funcionalidades incompletas.
+* Revisa el estado de las pruebas.
+* Detecta problemas de integración.
+
+### Fase 2: Planificación
+
+* Define los cambios mínimos necesarios.
+* Determina cómo integrar los pagos.
+* Define los eventos que utilizará el sistema de correo.
+* Identifica los cambios visuales del frontend.
+* Conserva la compatibilidad con el código existente.
+
+### Fase 3: Implementación
+
+* Completa el checkout.
+* Incorpora los métodos de pago simulados.
+* Mejora la gestión de pedidos.
+* Amplía las notificaciones por email.
+* Rediseña el frontend.
+* Integra todas las operaciones con el backend.
+* Actualiza Docker solo cuando sea necesario.
+
+### Fase 4: Pruebas
+
+* Ejecuta compilaciones.
+* Prueba los endpoints.
+* Verifica los eventos de RabbitMQ.
+* Comprueba el flujo de compra.
+* Corrige errores.
+* Verifica la persistencia.
+
+### Fase 5: Documentación
+
+* Actualiza el README.
+* Documenta la arquitectura real.
+* Describe las funcionalidades agregadas.
+* Documenta los endpoints nuevos o modificados.
+* Explica cómo iniciar el proyecto.
+* Añade instrucciones para realizar una compra de prueba.
+* Documenta la configuración de SMTP y las limitaciones del pago simulado.
+
+---
+
+## 14. REGLAS IMPORTANTES
+
+* No reconstruyas el proyecto desde cero.
+* No elimines funcionalidades existentes.
+* No crees un quinto microservicio innecesario.
+* No dupliques el servicio de correo.
+* No dupliques la lógica de pedidos.
+* No rompas la autenticación actual.
+* No reemplaces Angular.
+* No elimines configuraciones funcionales de Docker.
+* No dejes botones sin funcionalidad.
+* No sustituyas permanentemente el backend por datos ficticios.
+* No expongas credenciales ni secretos.
+* No declares que algo funciona si no lo has probado.
+* Prioriza que el flujo principal funcione completamente.
+* Mantén el código ordenado y comprensible para que los integrantes puedan explicarlo durante la evaluación.
+* Trabaja directamente en el repositorio.
+* Si encuentras una decisión técnica que no puede deducirse del código, utiliza la solución más sencilla y compatible, y documenta el motivo.
+
+---
+
+## 15. RESULTADO ESPERADO
+
+Al finalizar, Pedidos360 debe disponer de:
+
+* Cuatro microservicios funcionales: productos, identidad, carrito y email.
+* Catálogo conectado al backend.
+* Inicio de sesión integrado.
+* Carrito de compras funcional.
+* Checkout mejorado.
+* Métodos de pago simulados.
+* Pedidos persistentes.
+* Historial de compras.
+* Confirmaciones de compra por correo.
+* Mensajes y notificaciones visuales.
+* Frontend moderno y responsive.
+* Integración entre los servicios.
+* Configuración Docker funcional.
+* Documentación actualizada.
+* Pruebas ejecutadas y resultados documentados.
+
+**Comienza auditando el repositorio real y luego implementa los cambios directamente. No te detengas después de entregar un plan.**
+
+Al finalizar, presenta un resumen que indique:
+
+1. Qué funcionalidades ya existían.
+2. Qué funcionalidades se agregaron o corrigieron.
+3. Qué archivos se modificaron.
+4. Qué pruebas se ejecutaron.
+5. Qué problemas quedaron pendientes.
+6. Los comandos exactos para iniciar el proyecto.
+7. Cómo demostrar el flujo de compra durante la evaluación.

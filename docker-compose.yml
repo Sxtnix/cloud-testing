@@ -1,0 +1,112 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"   # AMQP (productores/consumidores)
+      - "15672:15672" # Consola de administración (http://localhost:15672)
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      # Por defecto el usuario "guest" solo conecta desde localhost; con esto
+      # puede entrar desde el navegador y desde los demas contenedores.
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    restart: unless-stopped
+
+  ms-productos:
+    build: ./ms-productos
+    container_name: ms-productos
+    ports:
+      - "8081:8081"
+      - "18081:8081" # tambien en 18081: es la URL que usa el frontend en local (environment.ts)
+    environment:
+      AZURE_ISSUER_URI: https://login.microsoftonline.com/9150f81f-b0fc-436d-998d-dcb5cf883d2e/v2.0
+      AUTH_BYPASS: ${AUTH_BYPASS:-false} # true = pruebas locales sin login Azure (ver .env)
+    restart: unless-stopped
+
+  ms-identidad:
+    build: ./ms-identidad
+    container_name: ms-identidad
+    ports:
+      - "8082:8082"
+    environment:
+      AZURE_ISSUER_URI: https://login.microsoftonline.com/9150f81f-b0fc-436d-998d-dcb5cf883d2e/v2.0
+      AUTH_BYPASS: ${AUTH_BYPASS:-false} # true = pruebas locales sin login Azure (ver .env)
+    restart: unless-stopped
+
+  ms-carrito:
+    build: ./ms-carrito
+    container_name: ms-carrito
+    ports:
+      - "8083:8083"
+    environment:
+      AZURE_ISSUER_URI: https://login.microsoftonline.com/9150f81f-b0fc-436d-998d-dcb5cf883d2e/v2.0
+      AUTH_BYPASS: ${AUTH_BYPASS:-false} # true = pruebas locales sin login Azure (ver .env)
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: guest
+      RABBITMQ_PASSWORD: guest
+      # Dentro del contenedor "localhost" es el propio contenedor: el catalogo
+      # se consulta por el nombre del servicio en la red de Docker.
+      PRODUCTOS_SERVICE_URL: http://ms-productos:8081/productos
+      # ms-pagos decide y registra el resultado del pago.
+      PAGOS_SERVICE_URL: http://ms-pagos:8085/pagos
+      # Base de datos de pedidos/carrito en disco (si no, se pierde al reiniciar).
+      DB_URL: jdbc:h2:file:/data/pedidos360_carrito
+    volumes:
+      - carrito-data:/data
+    depends_on:
+      - rabbitmq
+    restart: unless-stopped
+
+  ms-email:
+    build: ./ms-email
+    container_name: ms-email
+    ports:
+      - "8084:8084"
+    environment:
+      AZURE_ISSUER_URI: https://login.microsoftonline.com/9150f81f-b0fc-436d-998d-dcb5cf883d2e/v2.0
+      AUTH_BYPASS: ${AUTH_BYPASS:-false} # true = pruebas locales sin login Azure (ver .env)
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: guest
+      RABBITMQ_PASSWORD: guest
+      # Credenciales SMTP reales: definirlas en un archivo .env al hacer deploy
+      # (no se dejan valores secretos en este archivo).
+      MAIL_HOST: smtp.gmail.com
+      MAIL_PORT: "587"
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@pedidos360.cl}
+    depends_on:
+      - rabbitmq
+    restart: unless-stopped
+
+  frontend:
+    build: ./pedidos360-frontend
+    container_name: pedidos360-frontend
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+  # Microservicio de pagos (simulados): lo llama ms-carrito al confirmar la
+  # compra. NO necesita ruta publica en el API Gateway ni puerto abierto en el
+  # Security Group: solo ms-pagos y ms-carrito se hablan por la red de Docker.
+  ms-pagos:
+    build: ./ms-pagos
+    container_name: ms-pagos
+    ports:
+      - "8085:8085"   # solo para pruebas locales; en AWS no abrir en el SG
+    environment:
+      AZURE_ISSUER_URI: https://login.microsoftonline.com/9150f81f-b0fc-436d-998d-dcb5cf883d2e/v2.0
+      AUTH_BYPASS: ${AUTH_BYPASS:-false} # true = pruebas locales sin login Azure (ver .env)
+      # Pagos en disco: si no, al reiniciar se borran y se perderia el
+      # registro que evita pagar dos veces el mismo pedido.
+      DB_URL: jdbc:h2:file:/data/pedidos360_pagos
+    volumes:
+      - pagos-data:/data
+    restart: unless-stopped
+
+# Volumenes con datos que deben sobrevivir a `docker compose down`
+volumes:
+  carrito-data:
+  pagos-data:

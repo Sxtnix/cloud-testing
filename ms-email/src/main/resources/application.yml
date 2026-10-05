@@ -1,0 +1,55 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: ms-email
+
+  # Credenciales SMTP: SIEMPRE por variables de entorno, nunca en el repositorio.
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+
+  # Broker de mensajes (en docker-compose apunta al servicio "rabbitmq")
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        # Reintentos acotados para el envio SMTP. Si se agotan, el mensaje
+        # pasa a la cola de respaldo pedidos360.emails.dlq (dead-letter),
+        # configurada en RabbitConfig, en lugar de reintentar para siempre.
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 2000
+          multiplier: 2.0
+          max-interval: 10000
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${AZURE_ISSUER_URI:https://login.microsoftonline.com/9150f81f-b0fc-436d-998d-dcb5cf883d2e/v2.0}
+
+# Prueba local sin Azure (AUTH_BYPASS=true): no se exige JWT.
+# Por defecto false => autenticación completa con Microsoft Entra ID.
+app:
+  auth:
+    bypass: ${AUTH_BYPASS:false}
+
+pedidos360:
+  email:
+    from: ${MAIL_FROM:no-reply@pedidos360.cl}
