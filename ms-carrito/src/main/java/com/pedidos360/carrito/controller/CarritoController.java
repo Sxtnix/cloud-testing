@@ -7,6 +7,7 @@ import com.pedidos360.carrito.model.EstadoPedido;
 import com.pedidos360.carrito.model.MetodoPago;
 import com.pedidos360.carrito.model.Pedido;
 import com.pedidos360.carrito.messaging.EmailPublisher;
+import com.pedidos360.carrito.messaging.MonitorPublisher;
 import com.pedidos360.carrito.service.CarritoService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,16 +22,24 @@ import java.util.NoSuchElementException;
 /**
  * API del carrito, el checkout, el pago simulado y el historial de pedidos.
  * Todos los recursos estan ligados al usuario autenticado en el JWT.
+ *
+ * Cada hecho de negocio se publica DOS veces:
+ *  - RabbitMQ (EmailPublisher)  -> para ENTREGAR el correo (ms-email).
+ *  - Kafka (MonitorPublisher)   -> para OBSERVARLO en monitoreo (ms-monitoreo).
  */
 @RestController
 public class CarritoController {
 
     private final CarritoService carritoService;
     private final EmailPublisher emailPublisher;
+    private final MonitorPublisher monitorPublisher;
 
-    public CarritoController(CarritoService carritoService, EmailPublisher emailPublisher) {
+    public CarritoController(CarritoService carritoService,
+                             EmailPublisher emailPublisher,
+                             MonitorPublisher monitorPublisher) {
         this.carritoService = carritoService;
         this.emailPublisher = emailPublisher;
+        this.monitorPublisher = monitorPublisher;
     }
 
     /**
@@ -92,6 +101,8 @@ public class CarritoController {
                 jwt.getClaimAsString("preferred_username"),
                 jwt.getClaimAsString("name"),
                 pedido);
+        // Kafka -> ms-monitoreo registra el evento en el log de monitoreo.
+        monitorPublisher.publicarPedidoRegistrado(pedido);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(pedido);
     }
@@ -115,8 +126,10 @@ public class CarritoController {
 
         if (pedido.getEstadoPago() == EstadoPago.APROBADO) {
             emailPublisher.publicarPagoAprobado(destino, nombre, pedido);
+            monitorPublisher.publicarPagoAprobado(pedido);
         } else {
             emailPublisher.publicarPagoRechazado(destino, nombre, pedido);
+            monitorPublisher.publicarPagoRechazado(pedido);
         }
 
         return ResponseEntity.ok(pedido);
@@ -151,6 +164,7 @@ public class CarritoController {
                 jwt.getClaimAsString("preferred_username"),
                 jwt.getClaimAsString("name"),
                 pedido);
+        monitorPublisher.publicarCambioEstado(pedido);
 
         return ResponseEntity.ok(pedido);
     }

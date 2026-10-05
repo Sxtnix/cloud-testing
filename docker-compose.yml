@@ -51,6 +51,8 @@ services:
       PRODUCTOS_SERVICE_URL: http://ms-productos:8081/productos
       # ms-pagos decide y registra el resultado del pago.
       PAGOS_SERVICE_URL: http://ms-pagos:8085/pagos
+      # Broker del log de eventos que publica para monitoreo.
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # Base de datos de pedidos/carrito en disco (si no, se pierde al reiniciar).
       DB_URL: jdbc:h2:file:/data/pedidos360_carrito
     volumes:
@@ -86,6 +88,45 @@ services:
     container_name: pedidos360-frontend
     ports:
       - "80:80"
+    restart: unless-stopped
+
+  # Log de eventos de negocio para monitoreo (Kafka en modo KRaft: sin ZooKeeper).
+  # - PLAINTEXT (kafka:9092) lo usan los microservicios dentro de la red Docker.
+  # - EXTERNAL (127.0.0.1:9094) sirve para inspeccionarlo desde la maquina
+  #   local; al ser 127.0.0.1 en AWS NO queda expuesto por el Security Group.
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    ports:
+      - "127.0.0.1:9094:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    restart: unless-stopped
+
+  # Microservicio de monitoreo: consume el topico pedidos360.monitoreo y
+  # expone los eventos recientes y las estadisticas (GET /monitoreo/*).
+  ms-monitoreo:
+    build: ./ms-monitoreo
+    container_name: ms-monitoreo
+    ports:
+      - "8086:8086"
+    environment:
+      AZURE_ISSUER_URI: https://login.microsoftonline.com/9150f81f-b0fc-436d-998d-dcb5cf883d2e/v2.0
+      AUTH_BYPASS: ${AUTH_BYPASS:-false} # true = pruebas locales sin login Azure (ver .env)
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      - kafka
     restart: unless-stopped
 
   # Microservicio de pagos (simulados): lo llama ms-carrito al confirmar la

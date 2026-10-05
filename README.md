@@ -36,45 +36,72 @@ Plataforma de e-commerce con arquitectura de microservicios, autenticación cent
    (EC2 + Spring Boot, cada uno valida el JWT           │ checkout publica
     emitido por Azure AD)                               │ eventos de correo
                                                        │
-                                        ┌──────────────┴──────────────┐
-                                        │ llama a POST /pagos         │
-                                        ▼                             ▼
-                               ┌───────────────┐            ┌─────────────────┐
-                               │   ms-pagos     │            │    RabbitMQ      │
-                               │ (puerto 8085)  │            │ pedidos360.emails│
-                               └───────────────┘            └────────┬────────┘
-                                                                     │ consume
+                                         ┌──────────────┴──────────────┐
+                                         │ llama a POST /pagos         │
+                                         ▼                             ▼
+                                ┌───────────────┐            ┌─────────────────┐
+                                │   ms-pagos     │            │    RabbitMQ      │
+                                │ (puerto 8085)  │            │ pedidos360.emails│
+                                └───────────────┘            └────────┬────────┘
+                                                                      │ consume
+                                                                      ▼
+                                                             ┌───────────────┐
+                                                             │   ms-email     │
+                                                             │  (puerto 8084) │
+                                                             └───────┬───────┘
+                                                                     │ SMTP
                                                                      ▼
-                                                            ┌───────────────┐
-                                                            │   ms-email     │
-                                                            │  (puerto 8084) │
-                                                            └───────┬───────┘
-                                                                    │ SMTP
-                                                                    ▼
-                                                               Bandeja del
-                                                               cliente
+                                                                Bandeja del
+                                                                cliente
+
+                        (el mismo checkout/pago también publica en paralelo)
+                                                        │
+                                                        ▼
+                                               ┌─────────────────┐
+                                               │      Kafka       │
+                                               │ pedidos360.      │
+                                               │ monitoreo (log)  │
+                                               └────────┬────────┘
+                                                        │ consume
+                                                        ▼
+                                               ┌───────────────┐
+                                               │ ms-monitoreo  │
+                                               │  (puerto 8086)│
+                                               └───────┬───────┘
+                                                       │
+                                                       ▼
+                                              GET /monitoreo/eventos
+                                              GET /monitoreo/estadisticas
 ```
 
-**Eventos publicados en la cola `pedidos360.emails`** (uno por hecho de negocio, sin correos duplicados):
+**Cada hecho de negocio se publica dos veces**, con un propósito distinto:
 
-| Tipo | Cuándo se publica |
-|---|---|
-| `PEDIDO_REGISTRADO` | El checkout crea el pedido (queda pendiente de pago) |
-| `PAGO_APROBADO` | El pago simulado fue aprobado |
-| `PAGO_RECHAZADO` | El pago simulado fue rechazado (pedido cancelado) |
-| `CAMBIO_ESTADO` | Cambio de estado logístico (en preparación / enviado / entregado) |
+| Tipo | Cuándo se publica | Destino |
+|---|---|---|
+| `PEDIDO_REGISTRADO` | El checkout crea el pedido (queda pendiente de pago) | RabbitMQ (correo) **y** Kafka (monitoreo) |
+| `PAGO_APROBADO` | El pago simulado fue aprobado | idem |
+| `PAGO_RECHAZADO` | El pago simulado fue rechazado (pedido cancelado) | idem |
+| `CAMBIO_ESTADO` | Cambio de estado logístico (en preparación / enviado / entregado) | idem |
 
-Si el broker no está disponible, el error solo se registra en los logs: la compra nunca falla por RabbitMQ. Los mensajes fallidos van a la cola de respaldo `pedidos360.emails.dlq` tras 3 intentos.
+- **RabbitMQ (cola)** → entrega de correos: `ms-email` recibe cada mensaje una vez; tras 3 intentos fallidos los mensajes van a `pedidos360.emails.dlq`.
+- **Kafka (log)** → monitoreo: el mensaje queda guardado en el tópico `pedidos360.monitoreo` con su partición y offset; `ms-monitoreo` lo lee sin borrarlo (pueden leerlo varios consumidores).
+
+Si un broker no está disponible, el error solo se registra en los logs: **la compra nunca falla** por RabbitMQ ni por Kafka. Detalle completo en [`KAFKA-MONITOREO.txt`](KAFKA-MONITOREO.txt).
 
 ## Estructura del repositorio
 
 ```
 ├── ms-productos/          # Microservicio de catálogo de productos
 ├── ms-identidad/          # Microservicio de perfil de usuario (vinculado al login de Azure AD)
-├── ms-carrito/            # Microservicio de carrito de compras y pedidos
+├── ms-carrito/            # Microservicio de carrito de compras y pedidos (productor Kafka)
 ├── ms-pagos/              # Microservicio de pagos (decide y registra el resultado del pago)
 ├── ms-email/              # Microservicio de correos (consume RabbitMQ y envía por SMTP)
-└── pedidos360-frontend/   # SPA en Angular con MSAL
+├── ms-monitoreo/          # Microservicio de monitoreo (consume el log de Kafka)
+├── pedidos360-frontend/   # SPA en Angular con MSAL
+├── docker-compose.yml     # Stack completo: rabbitmq, kafka, 6 microservicios y frontend
+├── GUIA-DESPLIEGUE.txt    # Despliegue paso a paso en AWS + cambio de tenant
+├── KAFKA-MONITOREO.txt    # Qué es Kafka, cómo funciona acá y cómo demostrarlo
+└── ayuda.txt              # Mapa del proyecto (qué pidió la evaluación y dónde está)
 ```
 
 Cada microservicio de backend sigue la misma estructura interna:
@@ -138,6 +165,12 @@ ms-x/
 |---|---|---|
 | POST | `/emails/enviar` | Envío manual de un correo (pruebas/operación). El flujo normal consume la cola `pedidos360.emails` de forma asíncrona |
 
+**ms-monitoreo** (`/monitoreo`) — lee el tópico de Kafka `pedidos360.monitoreo`
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/monitoreo/eventos` | Últimos eventos de negocio vistos (más reciente primero, hasta 500 en memoria). Filtro opcional `?tipo=PAGO_APROBADO` |
+| GET | `/monitoreo/estadisticas` | Totales: `totalRecibidos`, `retenidosEnMemoria`, contador `porTipo` y `ultimoEvento` |
+
 ### Flujo de correo asíncrono (RabbitMQ)
 1. El usuario confirma su compra (`POST /carrito/checkout`) o se produce un evento de pago/cambio de estado.
 2. `ms-carrito` publica un mensaje JSON `{destino, asunto, cuerpo, tipo}` en la cola durable `pedidos360.emails` (con plantilla HTML).
@@ -149,6 +182,20 @@ ms-x/
 - Sin `MAIL_USERNAME`/`MAIL_PASSWORD`: el envío falla y el mensaje queda reintentando → se ven los logs de `ms-email` y la DLQ en la consola de RabbitMQ (`http://localhost:15672`). La compra sigue funcionando.
 - Envío manual rápido (no depende de RabbitMQ): `POST /emails/enviar` con `{destino, asunto, cuerpo}` y revisar el log de `ms-email`.
 - Para ver los correos de verdad: crear una *app password* de Gmail en `.env` (`MAIL_USERNAME`, `MAIL_PASSWORD`) y reiniciar solo `ms-email`.
+
+### Monitoreo de eventos (Kafka)
+1. El mismo hecho de negocio que genera correo se publica también en el tópico
+   `pedidos360.monitoreo` (productor: `MonitorPublisher` en `ms-carrito`, con la clave = `pedidoId`
+   para que todos los eventos de un pedido caigan en la misma partición y se lean en orden).
+2. `ms-monitoreo` (grupo de consumidor `ms-monitoreo`) lo consume con `@KafkaListener` y guarda los
+   últimos 500 eventos en memoria junto a contadores acumulados por tipo.
+3. Cada evento queda con su coordenada en el log: `topico`, `particion` y `offset`.
+4. Se consulta con `GET /monitoreo/eventos` y `GET /monitoreo/estadisticas`.
+5. Kafka se consume sin borrar (a diferencia de la cola de correos): el log queda y puede leerlo
+   otro consumidor más adelante. Si Kafka no está disponible, solo se registra el error: la compra sigue.
+
+**Ver en vivo:** `docker compose up -d --build` → comprar en la página → `curl http://localhost:8086/monitoreo/eventos`
+y `docker compose logs -f ms-monitoreo`. Guía completa, comandos y guion de exposición en [`KAFKA-MONITOREO.txt`](KAFKA-MONITOREO.txt).
 
 Todos los endpoints (salvo que se indique lo contrario) requieren un JWT válido emitido por Azure AD en el header `Authorization: Bearer <token>`.
 
@@ -185,12 +232,13 @@ Cada `ms-x/src/main/resources/application.yml` usa variables de entorno con valo
 - `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` → apuntando a la base de datos cloud (RDS u otro motor).
 - `PRODUCTOS_SERVICE_URL`, `PAGOS_SERVICE_URL` → cómo se llaman entre sí los microservicios (en docker-compose ya apuntan a los servicios `ms-productos` y `ms-pagos`).
 - `RABBITMQ_HOST`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD` → broker de mensajes (en docker-compose ya apuntan al servicio `rabbitmq`).
+- `KAFKA_BOOTSTRAP_SERVERS` → broker de eventos para monitoreo (en docker-compose ya apunta al servicio `kafka`; por defecto `localhost:9092`).
 - `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` → (**solo ms-email**) credenciales SMTP, p. ej. una app password de Gmail. **Nunca** commitearlas: usar un archivo `.env` (docker-compose las lee de ahí) o secretos del servidor.
 
 ### 4. AWS
-- Desplegar cada microservicio (`ms-productos`, `ms-identidad`, `ms-carrito`, `ms-pagos`, `ms-email`) en instancias EC2 (cada uno trae su `Dockerfile`, o se puede correr el `.jar` directo con `mvn clean package` y `java -jar`).
-- Desplegar un broker RabbitMQ (p. ej. un contenedor `rabbitmq:3-management` o un servicio gestionado) y apuntar `RABBITMQ_HOST` hacia él.
-- Configurar **API Gateway** para enrutar hacia cada EC2 (ej. `/productos/*` → ms-productos, `/usuarios/*` → ms-identidad, `/carrito/*` y `/pedidos/*` → ms-carrito). `ms-email` y `ms-pagos` **no necesitan ruta pública**: el primero solo consume la cola y habla con el SMTP, y el segundo solo lo llama `ms-carrito` por la red interna.
+- Desplegar cada microservicio (`ms-productos`, `ms-identidad`, `ms-carrito`, `ms-pagos`, `ms-email`, `ms-monitoreo`) en instancias EC2 (cada uno trae su `Dockerfile`, o se puede correr el `.jar` directo con `mvn clean package` y `java -jar`).
+- Desplegar un broker RabbitMQ (p. ej. un contenedor `rabbitmq:3-management` o un servicio gestionado) y apuntar `RABBITMQ_HOST` hacia él; y un broker Kafka (p. ej. `apache/kafka` o un servicio gestionado) y apuntar `KAFKA_BOOTSTRAP_SERVERS` hacia él.
+- Configurar **API Gateway** para enrutar hacia cada EC2 (ej. `/productos/*` → ms-productos, `/usuarios/*` → ms-identidad, `/carrito/*` y `/pedidos/*` → ms-carrito). `ms-email`, `ms-pagos` y `ms-monitoreo` **no necesitan ruta pública**: el primero solo consume la cola y habla con el SMTP, y los otros dos solo se hablan por la red interna.
 - Desplegar el frontend Angular compilado (`npm run build`, carpeta `dist/`) en S3+CloudFront, Amplify, o servirlo con el `Dockerfile`/`nginx.conf` incluido.
 
 ### 5. Ejecución local para probar antes de desplegar
@@ -200,12 +248,19 @@ docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 \
   -e RABBITMQ_DEFAULT_USER=pedidos360 -e RABBITMQ_DEFAULT_PASS=pedidos360 \
   rabbitmq:3.13-management-alpine
 
+# Broker de monitoreo (una sola vez; lo más simple es levantar solo ese servicio)
+docker compose up -d kafka
+
 # Cada microservicio (default AUTH_BYPASS=false => login real de Microsoft Entra ID)
 cd ms-productos && mvn spring-boot:run   # puerto 8081
 cd ms-identidad && mvn spring-boot:run   # puerto 8082
 cd ms-carrito   && mvn spring-boot:run   # puerto 8083
 cd ms-email     && mvn spring-boot:run   # puerto 8084 (MAIL_* opcionales)
 cd ms-pagos     && mvn spring-boot:run   # puerto 8085 (lo llama ms-carrito al pagar)
+cd ms-monitoreo && mvn spring-boot:run   # puerto 8086 (consume Kafka)
+
+# Broker de monitoreo: Kafka corriendo por Docker (solo hace falta para ms-monitoreo
+# y para que ms-carrito publique eventos; con docker compose up se levanta solo)
 
 # Segunda instancia de ms-productos en 18081: es la URL que usa el
 # frontend en local (pedidos360-frontend/src/environments/environment.ts)
@@ -249,6 +304,12 @@ docker compose up --build
    curl -X PUT http://localhost:8083/pedidos/1/estado -H "Content-Type: application/json" -d '{"estado":"EN_PREPARACION"}'
    ```
    (`CONFIRMADO → EN_PREPARACION → ENVIADO → ENTREGADO`; una transición inválida devuelve `400`).
+9. **Monitoreo (Kafka):** con la compra hecha, ver el evento recién publicado:
+   ```bash
+   curl http://localhost:8086/monitoreo/eventos
+   curl http://localhost:8086/monitoreo/estadisticas
+   ```
+   (detalle y comandos extra en `KAFKA-MONITOREO.txt`).
 
 ## Pruebas ejecutadas
 
@@ -259,7 +320,10 @@ docker compose up --build
 | `ms-carrito` | `mvn test` | **21 tests, 0 fallos** |
 | `ms-pagos` | `mvn test` | **8 tests, 0 fallos** |
 | `ms-email` | `mvn test` | **10 tests, 0 fallos** |
+| `ms-monitoreo` | `mvn test` | **6 tests, 0 fallos** |
 | Frontend | `npx ng build` | **Build exitoso** (0 errores) |
+
+**Total: 54 pruebas, 0 fallos** (7 + 2 + 21 + 8 + 10 + 6).
 
 Verificación manual end-to-end sobre los servicios levantados (2026-10-02): catálogo con imágenes y filtros
 sin tildes, precios tomados de `ms-productos` (se ignora el precio del navegador), acumulación de ítems,
@@ -267,8 +331,9 @@ checkout `PENDIENTE_PAGO`, carrito vacío tras el checkout, **pago delegado en `
 rechazado con carrito restaurado y registro consultable en `GET /pagos/pedido/{id}`), pago doble → `400`,
 transiciones de estado y CORS con el origen desplegado.
 
-**Verificación con `docker compose up -d --build`** (2026-10-02, Docker Desktop + WSL2): los 7 contenedores
-(`rabbitmq`, los 5 microservicios y el frontend en nginx) levantan; el catálogo siembra 8 productos; la
+**Verificación con `docker compose up -d --build`** (2026-10-02, Docker Desktop + WSL2): en esa corrida eran
+7 contenedores (`rabbitmq`, los 5 microservicios y el frontend en nginx; **hoy el stack son 9**: se sumaron
+`kafka` y `ms-monitoreo`); el catálogo siembra 8 productos; la
 compra corre completa sobre el stack aprobado (`CONFIRMADO` / `APROBADO` con registro en
 `GET /pagos/pedido/{id}`), el pago doble devuelve `400` y el pago rechazado deja `CANCELADO` / `RECHAZADO`
 con el carrito restaurado. RabbitMQ funciona end-to-end: `ms-carrito` publica y `ms-email` consume
@@ -280,6 +345,11 @@ También se verificó el modo degradado: con el broker caído los eventos se reg
 **No se pudo verificar**: el envío real de correos por SMTP (falta una app password real en `.env`) y el
 login real con Microsoft Entra ID (requiere cuenta del tenant registrado).
 
+**Monitoreo con Kafka**: las 6 pruebas de `ms-monitoreo` y las 21 de `ms-carrito` están en verde y el
+`docker-compose.yml` (servicios `kafka` + `ms-monitoreo`) valida con `docker compose config`. **Pendiente de
+ejecutar** en la próxima corrida: el flujo end-to-end con el broker levantado (comprar y ver el evento en
+`GET /monitoreo/eventos`); la receta exacta está en `KAFKA-MONITOREO.txt` punto 7.
+
 ## Limitaciones conocidas
 
 - El pago es **simulado**: lo decide y registra `ms-pagos` (sin integración con pasarelas bancarias) y no se
@@ -290,6 +360,9 @@ login real con Microsoft Entra ID (requiere cuenta del tenant registrado).
 - La base de datos por defecto es H2. En `docker-compose.yml` se usan H2 en disco con los volúmenes
   `carrito-data` y `pagos-data` para que pedidos y pagos sobrevivan a reinicios; en producción se recomienda
   MySQL/PostgreSQL.
+- `ms-monitoreo` guarda los últimos 500 eventos **en memoria**: al reiniciarse se pierden los eventos
+  (los contadores vuelven a 0), pero el log completo sigue en Kafka. En producción se usaría una
+  persistencia (p. ej. OpenSearch/Elasticsearch o una base de datos) si se necesita histórico.
 
 ## Integrantes
 

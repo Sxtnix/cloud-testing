@@ -1,5 +1,19 @@
 # CHANGELOG - Pedidos360
 
+## [1.5.0] - 2026-10-05 — Monitoreo con Kafka
+### Añadido
+- **Kafka como log de eventos de negocio (monitoreo)**, en paralelo a RabbitMQ (que sigue siendo quien entrega los correos): el tópico `pedidos360.monitoreo` recibe los mismos 4 eventos que la cola (`PEDIDO_REGISTRADO`, `PAGO_APROBADO`, `PAGO_RECHAZADO`, `CAMBIO_ESTADO`) con clave = `pedidoId` para que todos los eventos de un pedido se escriban en la misma partición y se lean en orden.
+- **Productor en `ms-carrito`**: dependencia `spring-kafka`, variable `KAFKA_BOOTSTRAP_SERVERS` (por defecto `localhost:9092`) y clase `messaging/MonitorPublisher.java`, llamada desde `CarritoController` en checkout, pago aprobado, pago rechazado y cambio de estado. Si Kafka no está disponible solo se registra el error: la compra nunca falla.
+- **Nuevo microservicio `ms-monitoreo`** (Spring Boot, puerto 8086, `Dockerfile` propio): consume el tópico con `@KafkaListener` (grupo de consumidor `ms-monitoreo`, JSON ilegible no detiene al consumidor), expone los últimos 500 eventos con su `topico`/`particion`/`offset` en `EventoMonitor`, mantiene contadores acumulados por tipo (`EventoStore`) y publica `GET /monitoreo/eventos?tipo=...` y `GET /monitoreo/estadisticas`; CORS y bypass igual que el resto de servicios.
+- **`docker-compose.yml`**: servicio `kafka` (`apache/kafka:3.9.0` en modo KRaft, sin ZooKeeper, auto-creación de tópico, expuesto solo en `127.0.0.1:9094`), servicio `ms-monitoreo` (`depends_on: kafka`) y `KAFKA_BOOTSTRAP_SERVERS: kafka:9092` para `ms-carrito`. Total del stack: 9 contenedores.
+- **6 pruebas nuevas en `ms-monitoreo`** (`EventoStoreTest` 4, `EventoConsumerTest` 2); `ms-carrito` sigue en 21. Total del proyecto: 54 pruebas en verde.
+- **`KAFKA-MONITOREO.txt`**: explicación de qué es Kafka y cómo funciona acá, tabla RabbitMQ vs Kafka, diagrama de flujo, API del monitoreo con ejemplos JSON, receta de verificación paso a paso, qué quedó verificado/pendiente y guion de presentación de 60 s.
+- `README.md`, `ayuda.txt` y `GUIA-DESPLIEGUE.txt` actualizados con `ms-monitoreo`, el puerto 8086, el servicio `kafka` y la sección de monitoreo.
+
+### Limitaciones conocidas
+- El flujo end-to-end con broker real (comprar y ver el evento en `GET /monitoreo/eventos`) está **pendiente de ejecutar**; lo verificado hasta ahora es la compilación, las 6 pruebas unitarias de `ms-monitoreo`, las 21 de `ms-carrito` y la validez del `docker-compose.yml`. La receta exacta queda en `KAFKA-MONITOREO.txt` punto 7.
+- `ms-monitoreo` guarda los eventos en memoria (ventana de 500): al reiniciarse se pierde el histórico local, pero el log completo permanece en Kafka.
+
 ## [1.4.0] - 2026-10-01 — Segunda evaluación
 ### Añadido
 - **Métodos de pago simulados** en `ms-carrito`: `EstadoPago` (`PENDIENTE`/`APROBADO`/`RECHAZADO`), `MetodoPago` (`TARJETA_CREDITO`/`TARJETA_DEBITO`/`TRANSFERENCIA`) y flujo de checkout en dos pasos sin duplicar pedidos: `POST /carrito/checkout` crea el pedido en `PENDIENTE_PAGO` y vacía el carrito; `POST /pedidos/{id}/pago` aprueba (`CONFIRMADO`+`APROBADO`) o rechaza (`CANCELADO`+`RECHAZADO`, restaurando el carrito). Un pago repetido devuelve 400.

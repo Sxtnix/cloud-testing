@@ -1,0 +1,241 @@
+===============================================================================
+ KAFKA + MONITOREO EN PEDIDOS360 — QUÉ ESTAMOS PRESENTANDO
+-------------------------------------------------------------------------------
+ Qué es Kafka, por qué está en el proyecto, cómo funciona exactamente acá,
+ cómo verificarlo y un guion listo para exponerlo.
+ Leer de arriba hacia abajo.
+===============================================================================
+
+
+1. RESUMEN EN 30 SEGUNDOS
+-------------------------------------------------------------------------------
+ Pedidos360 publica cada hecho de negocio DOS veces, con un propósito
+ distinto para cada broker:
+
+   RabbitMQ (cola)  ->  ENTREGAR correos      -> ms-email  -> SMTP
+   Kafka   (log)    ->  OBSERVAR eventos      -> ms-monitoreo -> API de monitoreo
+
+ Kafka guarda un historial inmutable de eventos en el topico
+ "pedidos360.monitoreo"; el microservicio ms-monitoreo (puerto 8086) lo lee y
+ lo expone en GET /monitoreo/eventos y GET /monitoreo/estadisticas.
+
+ Si Kafka se cae, la compra NUNCA falla: solo deja de registrarse el
+ monitoreo (mismo criterio que RabbitMQ con los correos).
+
+
+2. QUÉ ES KAFKA (los conceptos con los que se explica)
+-------------------------------------------------------------------------------
+ - Productor: quien ESCRIBE eventos. Aquí es ms-carrito, clase
+   com.pedidos360.carrito.messaging.MonitorPublisher (usa KafkaTemplate).
+
+ - Tópico (topic): el "canal" con nombre donde queda el log. Aquí:
+   pedidos360.monitoreo (se crea solo: KAFKA_AUTO_CREATE_TOPICS_ENABLE=true).
+
+ - Mensaje / registro: el JSON de un evento, por ejemplo:
+     {"tipo":"PAGO_APROBADO","pedidoId":7,"usuarioId":"oid-1",
+      "monto":899980.0,"estadoPedido":"CONFIRMADO","estadoPago":"APROBADO",
+      "detalle":"Pago aprobado por ms-pagos","fecha":"...","servicio":"ms-carrito"}
+
+ - Clave (key): el id del pedido. La clave decide en qué PARTICIÓN cae el
+   mensaje (hash de la clave), así todos los eventos de un mismo pedido
+   quedan en la misma partición y se leen en orden.
+
+ - Partición: el log se divide en N archivos independientes (aquí, 1 por
+   defecto). Permite paralelismo: varios consumidores leyendo a la vez.
+
+ - Consumidor: quien LEE. Aquí es ms-monitoreo, clase
+   com.pedidos360.monitoreo.messaging.EventoConsumer (@KafkaListener).
+
+ - Grupo de consumidor: "ms-monitoreo". Cada partición se le asigna a un
+   integrante del grupo; si hay 2 instancias de ms-monitoreo, se reparten
+   las particiones (si hay más instancias que particiones, las sobrantes
+   quedan en espera).
+
+ - Offset: la posición dentro de la partición. El grupo recuerda hasta
+   dónde leyó: si ms-monitoreo se reinicia, continúa donde quedó (y la
+   primera vez que arranca lee desde el principio: auto-offset-reset=earliest).
+
+ - Inmutabilidad: consumir NO borra el mensaje. Por eso el mismo evento
+   puede leerlo quien quiera: hoy ms-monitoreo, mañana una métrica nueva,
+   sin tocar al productor. (Esa es LA diferencia con RabbitMQ.)
+
+ - KRaft: modo moderno de Kafka sin ZooKeeper: el propio broker se
+   coordina a sí mismo. Un contenedor menos y una pieza menos que mantener.
+
+
+3. RABBITMQ vs KAFKA EN ESTE PROYECTO (tabla para la exposición)
+-------------------------------------------------------------------------------
+ |                        | RabbitMQ                  | Kafka                       |
+ |------------------------|---------------------------|-----------------------------|
+ | Qué modela             | una COLA de mensajes      | un LOG de eventos           |
+ | Al consumir            | el mensaje se BORRA      | el mensaje SIGUE ahí        |
+ | ¿Cuántos receptores?   | uno (se reparten)         | todos los que quieran       |
+ | Reintento / DLQ        | sí (3 intentos → DLQ)     | por offset y política de retención |
+ | Uso en Pedidos360      | ENTREGAR correos          | OBSERVAR / monitorear       |
+ | Si cae el broker       | la compra sigue; el correo queda pendiente | la compra sigue; no se registra el evento |
+ | Servicio del proyecto   | ms-email (8084)           | ms-monitoreo (8086)         |
+
+
+4. CÓMO FLUYE EN PEDIDOS360
+-------------------------------------------------------------------------------
+   Usuario (Angular)
+        │  POST /carrito/checkout   o   POST /pedidos/{id}/pago
+        ▼
+   ┌──────────────────────────── ms-carrito (8083) ────────────────────────────┐
+   │ 1. persiste el pedido en H2                                               │
+   │ 2. EmailPublisher     -> RabbitMQ   cola pedidos360.emails                │
+   │ 3. MonitorPublisher   -> Kafka      topico pedidos360.monitoreo           │
+   └───────────────────────────────────────────────────────────────────────────┘
+                    │                                    │
+                    ▼                                    ▼
+            ┌──────────────┐                     ┌────────────────┐
+            │   ms-email   │ (consume,           │ ms-monitoreo   │ (consume,
+            │   (8084)     │  3 intentos,        │    (8086)      │  guarda en
+            └──────┬───────┘  luego DLQ)         └───────┬────────┘  memoria)
+                   │ SMTP                                │
+                   ▼                                     ▼
+              Bandeja del                       GET /monitoreo/eventos
+              cliente                           GET /monitoreo/estadisticas
+
+ 4 eventos (los mismos que los de correo), publicados por ms-carrito:
+
+   PEDIDO_REGISTRADO   checkout crea el pedido (PENDIENTE_PAGO)
+   PAGO_APROBADO       pago simulado aprobado (CONFIRMADO + APROBADO)
+   PAGO_RECHAZADO      pago simulado rechazado (CANCELADO + RECHAZADO)
+   CAMBIO_ESTADO       cambio logístico (EN_PREPARACION/ENVIADO/ENTREGADO)
+
+
+5. ARCHIVOS Y SERVICIOS NUEVOS
+-------------------------------------------------------------------------------
+ ms-carrito (productor)
+   pom.xml                                + dependencia spring-kafka
+   src/main/resources/application.yml     + spring.kafka.bootstrap-servers
+   src/main/java/.../messaging/MonitorPublisher.java   (serializa y envía)
+   src/main/java/.../controller/CarritoController.java (lo llama en los 4 puntos)
+
+ ms-monitoreo (consumidor)  —  puerto 8086
+   pom.xml                    spring-boot-starter-web + spring-kafka
+   src/main/java/.../MonitoreoApplication.java
+   src/main/java/.../config/SecurityConfig.java     (JWT de Azure + CORS, igual que el resto)
+   src/main/java/.../messaging/EventoConsumer.java  (@KafkaListener, grupo ms-monitoreo)
+   src/main/java/.../model/EventoMonitor.java       (evento + partición/offset)
+   src/main/java/.../store/EventoStore.java         (ventana en memoria: últimos 500 + contadores)
+   src/main/java/.../controller/MonitoreoController.java
+   src/test/.../EventoStoreTest.java (4) + EventoConsumerTest.java (2)
+
+ docker-compose.yml
+   servicio kafka       apache/kafka:3.9.0 (KRaft)
+                        - kafka:9092  -> los microservicios (red Docker)
+                        - 127.0.0.1:9094 -> desde la máquina local (en AWS
+                          queda en loopback: NO se abre en el Security Group)
+   servicio ms-monitoreo  build ./ms-monitoreo, puerto 8086, KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+   ms-carrito           + KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+
+ .env.example           + comentario de KAFKA_BOOTSTRAP_SERVERS
+
+
+6. API DEL MONITOREO (puerto 8086)
+-------------------------------------------------------------------------------
+ GET /monitoreo/eventos
+     Últimos eventos (más reciente primero), máximo 500 en memoria.
+     Filtro opcional: ?tipo=PAGO_APROBADO
+
+     [
+       {"tipo":"PAGO_APROBADO","pedidoId":7,"usuarioId":"oid-1",
+        "monto":899980.0,"estadoPedido":"CONFIRMADO","estadoPago":"APROBADO",
+        "metodoPago":"TARJETA_CREDITO","detalle":"Pago aprobado por ms-pagos",
+        "fecha":"2026-10-05T15:01:02Z","servicio":"ms-carrito",
+        "topico":"pedidos360.monitoreo","particion":0,"offset":3}
+     ]
+
+ GET /monitoreo/estadisticas
+     {
+       "totalRecibidos": 4,
+       "retenidosEnMemoria": 4,
+       "porTipo": {"PEDIDO_REGISTRADO":1, "PAGO_APROBADO":1,
+                   "PAGO_RECHAZADO":1, "CAMBIO_ESTADO":1},
+       "ultimoEvento": { ... }
+     }
+
+ Igual que el resto de los servicios: con AUTH_BYPASS=false (producción)
+ exige un JWT de Azure AD; con AUTH_BYPASS=true (prueba local) entra sin token.
+
+
+7. CÓMO VERIFICARLO PASO A PASO (para la demo)
+-------------------------------------------------------------------------------
+ 0) Preparar local sin Azure (solo para la prueba rápida):
+      .env  ->  AUTH_BYPASS=true
+    (en producción se deja en false)
+
+ 1) Levantar todo:
+      docker compose up -d --build
+    Esperar: docker compose ps  (todo "Up")
+
+ 2) Hacer una compra en la página (http://localhost:4200):
+      agregar producto -> carrito -> checkout -> pagar
+    (o repetir con "Modo demo: simular pago rechazado" para ver PAGO_RECHAZADO)
+
+ 3) Ver el monitoreo:
+      curl http://localhost:8086/monitoreo/eventos
+      curl http://localhost:8086/monitoreo/estadisticas
+      curl "http://localhost:8086/monitoreo/eventos?tipo=PAGO_APROBADO"
+
+ 4) Ver los logs del consumidor:
+      docker compose logs -f ms-monitoreo
+    Se ve: "Evento PAGO_APROBADO (pedido 7) recibido de Kafka en
+            pedidos360.monitoreo[0] offset=3"
+
+ 5) Mirar directamente el log de Kafka (prueba de que el mensaje queda):
+      docker exec -it kafka /opt/kafka/bin/kafka-console-consumer.sh \
+        --bootstrap-server localhost:9092 \
+        --topic pedidos360.monitoreo --from-beginning
+
+ 6) Consola de RabbitMQ (comparación):  http://localhost:15672  guest/guest
+    Ahí se ven las colas de correos; Kafka no tiene panel web: se mira con
+    los comandos de arriba o con la API de monitoreo.
+
+
+8. QUÉ SE VERIFICÓ Y QUÉ NO (sin inventar resultados)
+-------------------------------------------------------------------------------
+ VERIFICADO:
+   - mvn test ms-monitoreo: 6 pruebas, 0 fallos (store: ventana/filtros/
+     contadores; consumer: evento válido con partición-offset y mensaje ilegible
+     que no tumba al consumidor).
+   - mvn test ms-carrito: 21 pruebas, 0 fallos (sigue en verde con spring-kafka).
+    - docker compose config: archivo válido (servicios kafka y ms-monitoreo).
+    - Documentación actualizada: README.md (diagrama, árbol, endpoints 8086,
+      sección "Monitoreo de eventos", 54 pruebas), ayuda.txt (mapa del
+      proyecto, comandos, pruebas y verificación), CHANGELOG.md (entrada
+      1.5.0) y GUIA-DESPLIEGUE.txt (servicios kafka/ms-monitoreo, puerto
+      8086, 6 ocurrencias de AZURE_ISSUER_URI, Security Group).
+
+ PENDIENTE (no se ejecutó en esta sesión):
+   - El flujo end-to-end con el broker real levantado (comprar y ver el evento
+     llegar a /monitoreo/eventos). Los pasos del punto 7 son la receta exacta.
+
+
+9. GUIÓN DE PRESENTACIÓN (60 segundos)
+-------------------------------------------------------------------------------
+ 1. "Cada acción importante de la tienda genera un evento: se creó un pedido,
+     se aprobó un pago, cambió el estado logístico."
+ 2. "Esos eventos salen dos veces: a RabbitMQ para que ms-email entregue los
+     correos, y a Kafka para observarlos."
+ 3. "Kafka es un log: los mensajes no se borran al consumirse, quedan en el
+     tópico pedidos360.monitoreo con su partición y su offset."
+ 4. "ms-monitoreo consume ese tópico, guarda los últimos 500 eventos en
+     memoria y los expone en /monitoreo/eventos y /monitoreo/estadisticas."
+ 5. "Si Kafka se cae, la compra sigue funcionando: el monitoreo es
+     observabilidad, no dependencia."
+ 6. "Demo: compro en el navegador, y acá ven llegar el evento con su offset,
+     y las estadísticas sumando por tipo."
+
+===============================================================================
+ Cambios de configuración relacionados (si se despliega en AWS):
+   - docker-compose ya trae kafka y ms-monitoreo: no hay nada que agregar.
+    - El puerto 9094 se publica SOLO en 127.0.0.1: no abrir nada nuevo en el
+      Security Group. Ni 9092/9093/9094 ni el 8086 de ms-monitoreo se exponen:
+      todos se hablan por la red interna de Docker y se consulta con curl
+      dentro de la propia EC2.
+   - Si Tomy cambia de tenant: ms-monitoreo usa la misma variable
+     AZURE_ISSUER_URI que el resto (ver GUIA-DESPLIEGUE.txt sección 0.1).
+===============================================================================

@@ -9,11 +9,11 @@ RESUMEN EN 30 SEGUNDOS
 Si usan el MISMO tenant de Azure que ya está en el código (lo normal):
   [ ] 1. Azure Portal  -> registrar la URI de redirección pública      2 min
   [ ] 2. environment.prod.ts -> URL del frontend + API Gateway          5 min
-  [ ] 3. 4 x SecurityConfig.java -> agregar el origen (CORS)            5 min
+  [ ] 3. 6 x SecurityConfig.java -> agregar el origen (CORS)            5 min
   [ ] 4. .env en el servidor -> AUTH_BYPASS=false + MAIL_*              2 min
   [ ] 5. docker-compose.yml -> revisar checklist                       5 min
   [ ] 6. EC2 -> abrir puertos + "docker compose up -d --build"         10 min
-  [ ] 7. Verificar login + compra + correo                             5 min
+  [ ] 7. Verificar login + compra + correo + monitoreo (Kafka)          5 min
 
 Si Tomy crea SU registro/tenant de Azure NUEVO, además hacen los pasos marcados
 con  [NUEVO TENANT]  y sobre todo la SECCION 0.1, que indica ARCHIVO POR
@@ -40,7 +40,8 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
 0.1  *** DÓNDE CAMBIAR EL TENANT / CLIENT ID ***  (si se configura Azure desde cero)
 ================================================================================
   Si Tomy crea SU registro de aplicacion en Azure (otro tenant u otro cliente),
-  hay que cambiar los IDs en 5 lugares. El mismo valor se copia tal cual:
+  hay que cambiar los IDs en los lugares que indica la tabla. El mismo valor
+  se copia tal cual:
 
   +--------------------------+-----------------------------------------------+
   | Dato nuevo               | Dónde va (archivo -> línea exacta)            |
@@ -56,10 +57,10 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
   +--------------------------+-----------------------------------------------+
   | Directory (tenant) ID    | 1) .../environment.prod.ts  -> línea 9        |
   |                          | 2) .../environment.ts        -> línea 15      |
-  |                          | 3) docker-compose.yml -> las 5 ocurrencias    |
+  |                          | 3) docker-compose.yml -> las 6 ocurrencias    |
   |                          |    de AZURE_ISSUER_URI (líneas 24, 34, 44,    |
-  |                          |    68 y 100) (paso 3.2)                       |
-  |                          | 4) Si corren .jar sin docker: los 5           |
+  |                          |    70, 125 y 141) (paso 3.2)                  |
+  |                          | 4) Si corren .jar sin docker: los 6           |
   |                          |    ms-*/src/main/resources/application.yml    |
   |                          |    (issuer-uri, valor por defecto)            |
   +--------------------------+-----------------------------------------------+
@@ -205,21 +206,23 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
        - ms-productos/src/main/java/com/pedidos360/productos/config/SecurityConfig.java   (línea 54)
        - ms-identidad/src/main/java/com/pedidos360/identidad/config/SecurityConfig.java   (línea 57)
        - ms-carrito/src/main/java/com/pedidos360/carrito/config/SecurityConfig.java       (línea 58)
+       - ms-pagos/src/main/java/com/pedidos360/pagos/config/SecurityConfig.java           (línea 55)
        - ms-email/src/main/java/com/pedidos360/email/config/SecurityConfig.java           (línea 46)
+       - ms-monitoreo/src/main/java/com/pedidos360/monitoreo/config/SecurityConfig.java   (línea 52)
 
      Nota: al agregar una línea a un .java hay que RECONSTRUIR la imagen:
-        docker compose up -d --build ms-productos ms-identidad ms-carrito ms-pagos ms-email
+        docker compose up -d --build ms-productos ms-identidad ms-carrito ms-pagos ms-email ms-monitoreo
 
 3.2  [NUEVO TENANT] ISSUER DE LOS BACKENDS - docker-compose.yml
-     Cambiar las 5 ocurrencias (líneas 24, 34, 44, 68 y 100):
+     Cambiar las 6 ocurrencias (líneas 24, 34, 44, 70, 125 y 141):
 
          AZURE_ISSUER_URI: https://login.microsoftonline.com/<NUEVO_TENANT_ID>/v2.0
 
      Con el mismo tenant: NO tocar nada.
      Si corren los .jar SIN docker: exportar la variable AZURE_ISSUER_URI en el
-     entorno, o cambiar el valor por defecto en los 5 application.yml:
-         ms-productos L32 | ms-identidad L32 | ms-carrito L39
-         ms-email L45     | ms-pagos L32
+     entorno, o cambiar el valor por defecto en los 6 application.yml:
+         ms-productos L32 | ms-identidad L32 | ms-carrito L43
+         ms-email L45     | ms-pagos L32      | ms-monitoreo L22
              issuer-uri: ${AZURE_ISSUER_URI:https://login.microsoftonline.com/<TENANT>/v2.0}
 
 3.3  *** .env  -> CREAR en la raíz del proyecto, EN EL SERVIDOR ***  (si no existe)
@@ -239,27 +242,41 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
        - MAIL_PASSWORD va solo aquí; NUNCA en el código ni en git.
 
 3.4  *** docker-compose.yml - CHECKLIST COMPLETO ***
-     [ ] Líneas 25, 35, 45, 69, 101  AUTH_BYPASS: ${AUTH_BYPASS:-false}
+     [ ] Líneas 25, 35, 45, 71, 126 y 142  AUTH_BYPASS: ${AUTH_BYPASS:-false}
                                  -> dejar EXACTAMENTE así (default false = seguro)
-     [ ] Líneas 24, 34, 44, 68, 100  AZURE_ISSUER_URI -> solo si tenant nuevo (3.2)
+     [ ] Líneas 24, 34, 44, 70, 125 y 141  AZURE_ISSUER_URI -> solo si tenant nuevo (3.2)
      [ ] Líneas 9-13  rabbitmq (usuario guest/guest + rabbitmq.conf)
                                  -> OK para LOCAL. En AWS CAMBIAR credenciales:
                                     RABBITMQ_DEFAULT_USER: <usuario>
                                     RABBITMQ_DEFAULT_PASS: <clave fuerte>
                                     y lo mismo en RABBITMQ_USERNAME/RABBITMQ_PASSWORD:
-                                      línea 47-48 (ms-carrito)
-                                      línea 71-72 (ms-email)
+                                      líneas 47-48 (ms-carrito)
+                                      líneas 73-74 (ms-email)
      [ ] Líneas 6 y 7   puertos rabbitmq "5672:5672" y "15672:15672"
                                  -> en AWS QUITARLOS o no abrirlos en el
                                     Security Group (las apps se hablan por la
                                     red interna de Docker; 15672 es la consola
                                     de administración y NO debe ser pública)
-     [ ] Líneas 52-53   PRODUCTOS_SERVICE_URL y PAGOS_SERVICE_URL
+     [ ] Líneas 51 y 53  PRODUCTOS_SERVICE_URL y PAGOS_SERVICE_URL
                                  -> NO cambiar si los servicios se llaman igual
-     [ ] Líneas 75-78   MAIL_* -> NO poner credenciales ahí; vienen del .env
-     [ ] Líneas 85-88   frontend -> build: ./pedidos360-frontend, puerto 80:80
+     [ ] Línea 55      KAFKA_BOOTSTRAP_SERVERS: kafka:9092 (ms-carrito)
+                                 -> NO cambiar; es el nombre del servicio kafka
+                                    en la red de Docker (también en la línea 127
+                                    de ms-monitoreo)
+     [ ] Líneas 77-81  MAIL_* -> NO poner credenciales ahí; vienen del .env
+     [ ] Líneas 86-90  frontend -> build: ./pedidos360-frontend, puerto 80:80
                                  -> ver CHECKPOINT HTTPS (4.4)
-     [ ] Líneas 91-102  ms-pagos (puerto 8085) -> dejar como está: es un
+     [ ] Líneas 97-117 kafka (apache/kafka 3.9, KRaft, sin ZooKeeper)
+                                 -> broker de monitoreo. El puerto 9094 ya está
+                                    publicado SOLO en 127.0.0.1 (localhost);
+                                    en AWS NO abrir 9092/9093/9094 en el
+                                    Security Group: las apps se hablan por la
+                                    red interna de Docker
+     [ ] Líneas 119-133 ms-monitoreo (puerto 8086) -> servicio INTERNO: NO
+                                 abrir 8086 en el Security Group ni ruta en el
+                                 API Gateway (se consulta desde la propia EC2
+                                 con curl/docker exec, o desde la consola)
+     [ ] Líneas 135-148 ms-pagos (puerto 8085) -> dejar como está: es un
                                  servicio INTERNO, solo lo llama ms-carrito
 
 3.5  (opcional) BASE DE DATOS
@@ -279,8 +296,10 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
        8081-8083  integraciones del API Gateway
      NO abrir:
        5672 / 15672  (RabbitMQ - interno)
+       9092 / 9093 / 9094  (Kafka - interno; 9094 además ya está en 127.0.0.1)
        8084          (ms-email: no recibe tráfico público)
        8085          (ms-pagos: solo lo llama ms-carrito por la red de Docker)
+       8086          (ms-monitoreo: consulta el broker por la red de Docker)
        4200          (eso es el ng serve local, aquí no existe)
      Nota: el puerto 18081 es un mapeo SOLO local del compañero; en EC2 es
      el 8081 normal.
@@ -292,7 +311,8 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
          /usuarios/...   ->  http://<EC2>:8082/...
           /carrito/...    ->  http://<EC2>:8083/...
           /pedidos/...    ->  http://<EC2>:8083/...
-          (ms-email NO necesita ruta pública; ms-pagos TAMPOCO: es interno)
+          (ms-email NO necesita ruta pública; ms-pagos TAMPOCO: es interno.
+           ms-monitoreo TAMPOCO: se consulta en la propia EC2)
      Crear el stage (el actual se llama "desarrollo") -> copiar la URL base ->
      pegarla en environment.prod.ts (paso 2.1) y listo.
 
@@ -350,6 +370,15 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
   [ ] Si MAIL_* está en .env: llega el correo al correo del comprador
   [ ] Si RabbitMQ está caído: la compra IGUAL se completa (solo log de error
       en ms-carrito). Eso es esperado, no es un fallo del checkout.
+  [ ] Monitoreo con Kafka (servicios "kafka" y "ms-monitoreo"):
+        docker compose logs ms-monitoreo
+           -> se ve el evento recibido con topico/particion/offset
+        docker exec <alguna_ec2> curl -s http://localhost:8086/monitoreo/estadisticas
+           -> {"totalRecibidos":..,"porTipo":{"PEDIDO_REGISTRADO":1,...}}
+        curl http://localhost:8086/monitoreo/eventos   -> lista, la más nueva primero
+      Si Kafka NO está corriendo: la compra igual se completa (solo log de
+      error en ms-carrito), igual que con RabbitMQ.
+      Guía completa de esta demo: KAFKA-MONITOREO.txt
 
 
 ===============================================================================
@@ -363,7 +392,7 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
          azureTenantId (2.1) que coincidan con el tenant de Azure.
 
   "Blocked by CORS policy" / falla solo en OPTIONS
-      -> Falta el origen del frontend en los 4 SecurityConfig.java (3.1).
+      -> Falta el origen del frontend en los 6 SecurityConfig.java (3.1).
          Ojo: el origen es EXACTO (protocolo + host + puerto), sin barra final.
 
   Funciona en local pero en AWS "no inicia sesión" / error de conexión
@@ -401,6 +430,9 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
   - Ninguna contraseña en el código ni en git: todo por .env o secretos.
   - RabbitMQ consola (localhost:15672) usa guest/guest en LOCAL; en AWS
     cambiar credenciales y no exponer el puerto (3.4).
+  - Kafka (servicio "kafka") es SOLO para monitoreo: 9092/9093 son internos
+    y 9094 está publicado únicamente en 127.0.0.1; nunca en el Security Group.
+    Si ese contenedor falla, la compra sigue igual (ver 3.4 y sección 5).
 
 ===============================================================================
   Dudas: revisar también el README.md (secciones "Lo que falta configurar en

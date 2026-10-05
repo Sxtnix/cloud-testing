@@ -32,6 +32,10 @@ spring:
     username: ${RABBITMQ_USERNAME:guest}
     password: ${RABBITMQ_PASSWORD:guest}
 
+  # Broker de eventos para monitoreo (en docker-compose apunta al servicio "kafka")
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
   security:
     oauth2:
       resourceserver:

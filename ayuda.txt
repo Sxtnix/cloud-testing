@@ -15,18 +15,25 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
       copy .env.example .env        # y completar MAIL_* si se quieren correos
       docker compose up --build
 
-      Frontend:  http://localhost
-      RabbitMQ:  http://localhost:15672  (guest/guest)
+      Frontend:   http://localhost
+      RabbitMQ:   http://localhost:15672  (guest/guest)
+      Monitoreo:  http://localhost:8086/monitoreo/eventos
+                  http://localhost:8086/monitoreo/estadisticas
+      (el stack levanta 9 contenedores: rabbitmq, kafka, los 6
+       microservicios y el frontend)
 
   Opción B — Sin Docker (procesos separados, pruebas locales):
 
-      # terminal 1..4 (PowerShell)
+      # terminal 1..6 (PowerShell)
       # DEFAULT: AUTH_BYPASS=false => login real con Microsoft Entra ID
       cd ms-productos; mvn spring-boot:run                                  # 8081
       cd ms-identidad; mvn spring-boot:run                                  # 8082
       cd ms-carrito;   mvn spring-boot:run                                  # 8083
       cd ms-email;     mvn spring-boot:run                                  # 8084
       cd ms-pagos;     mvn spring-boot:run                                  # 8085
+      cd ms-monitoreo; mvn spring-boot:run                                  # 8086
+      # (ms-monitoreo y los eventos de ms-carrito necesitan Kafka corriendo;
+      #  con docker compose up -d kafka se levanta solo ese servicio)
 
       # Para probar SIN Azure (sin login de Microsoft), en cada terminal:
       #     $env:AUTH_BYPASS='true'
@@ -120,6 +127,23 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
                                (spring.rabbitmq.listener.simple.*: 3 intentos)
       - endpoint manual:       POST /emails/enviar
 
+  Monitoreo de eventos (Kafka): log de los mismos 4 eventos de negocio
+  ............................................  ms-carrito + ms-monitoreo
+      - publicación:           ms-carrito/.../messaging/MonitorPublisher.java
+                               topico: pedidos360.monitoreo (key = pedidoId)
+      - puntos de publicación: CarritoController (checkout, pago aprobado,
+                               pago rechazado y cambio de estado)
+      - consumidor:            ms-monitoreo/.../messaging/EventoConsumer.java
+                               (@KafkaListener, grupo "ms-monitoreo")
+      - evento + offset:       ms-monitoreo/.../model/EventoMonitor.java
+      - ventana y contadores:  ms-monitoreo/.../store/EventoStore.java
+                               (últimos 500 + totalRecibidos + porTipo)
+      - API:                   ms-monitoreo/.../controller/MonitoreoController.java
+                               GET /monitoreo/eventos?tipo=...
+                               GET /monitoreo/estadisticas
+      - broker (compose):      servicio "kafka" (apache/kafka 3.9, KRaft)
+      - guía completa:         KAFKA-MONITOREO.txt
+
   Rediseño del frontend (tienda comercial, responsive)  ...  Angular
       - estilos globales:      pedidos360-frontend/src/styles.css
       - navbar con buscador,
@@ -154,6 +178,7 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
           ms-carrito/.../config/SecurityConfig.java
           ms-pagos/.../config/SecurityConfig.java
           ms-email/.../config/SecurityConfig.java
+          ms-monitoreo/.../config/SecurityConfig.java
       - 403 si un usuario toca el carrito o pedido de otro:
           CarritoService.obtenerPedidoPropietario()
       - el precio/stock SIEMPRE vienen de ms-productos (ProductoClient),
@@ -162,9 +187,10 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
         ms-carrito solo aplica el estado sobre el pedido.
 
   Docker y variables de entorno ........................  raíz del proyecto
-      - docker-compose.yml      (5 servicios + rabbitmq + frontend;
-                                 PRODUCTOS_SERVICE_URL, PAGOS_SERVICE_URL
-                                 y volúmenes carrito-data / pagos-data)
+      - docker-compose.yml      (6 servicios + rabbitmq + kafka + frontend;
+                                 PRODUCTOS_SERVICE_URL, PAGOS_SERVICE_URL,
+                                 KAFKA_BOOTSTRAP_SERVERS y volúmenes
+                                 carrito-data / pagos-data)
       - .env.example            (plantilla segura, SIN credenciales)
       - rabbitmq.conf, Dockerfile de cada servicio
       - GUIA-DESPLIEGUE.txt     (despliegue en EC2)
@@ -185,12 +211,18 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
                  monto/pedido/método inválidos, consulta por pedido)
   ms-email      .../src/test/.../EmailServiceTest.java          4 tests
                 .../src/test/.../EmailListenerTest.java         4 tests  (10 en total)
+  ms-monitoreo  .../src/test/.../store/EventoStoreTest.java     4 tests
+                .../src/test/.../messaging/EventoConsumerTest.java  2 tests (6 en total)
+                (ventana de 500 eventos, filtro por tipo, contadores
+                 por tipo, evento válido con partición/offset y
+                 mensaje ilegible que no tumba al consumidor)
 
   Ejecutar TODOS (Windows, sin Maven instalado en el equipo):
 
       $env:JAVA_HOME='C:\Users\Sxtnix\AppData\Local\Temp\opencode\tools\jdk-17.0.20.1+1'
       $env:Path="$env:JAVA_HOME\bin;C:\Users\Sxtnix\AppData\Local\Temp\opencode\tools\apache-maven-3.9.9\bin;$env:Path"
-      cd ms-productos; mvn test     # y lo mismo en ms-identidad, ms-carrito, ms-pagos, ms-email
+      cd ms-productos; mvn test     # y lo mismo en ms-identidad, ms-carrito,
+                                    # ms-pagos, ms-email, ms-monitoreo
 
   Frontend:
 
@@ -201,7 +233,7 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
 ------------------------------------------------------
 
   VERIFICADO (compilación + tests + prueba manual sobre servicios levantados):
-    - mvn test en los 5 microservicios: 48 tests, 0 fallos.
+    - mvn test en los 6 microservicios: 54 tests, 0 fallos.
     - npx ng build: compila sin errores.
     - Catálogo: imágenes, filtros combinados y sin distinguir tildes
       (?categoria=Tecnologia encuentra "Tecnología").
@@ -223,6 +255,8 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
   VERIFICADO CON docker compose up -d --build (2026-10-02, Docker Desktop + WSL2):
     - Los 7 contenedores levantan: rabbitmq, los 5 microservicios y el
       frontend (nginx en http://localhost/), con catálogo sembrado (8 productos).
+      (Esa corrida fue antes de sumar kafka y ms-monitoreo: hoy el stack
+      completo son 9 contenedores.)
     - Compra completa sobre el stack aprobada (CONFIRMADO/APROBADO con
       registro en ms-pagos), pago doble 400 y rechazo CANCELADO/RECHAZADO
       con el carrito restaurado.
@@ -231,6 +265,16 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
     - Sin credenciales SMTP: 3 reintentos y luego pedidos360.emails.dlq
       (retry + dead-letter funcionando de punta a punta).
     - El ng serve local (4200) sigue sirviendo la app contra esos contenedores.
+
+  VERIFICADO — KAFKA + MONITOREO (2026-10-05):
+    - mvn test ms-monitoreo: 6 tests, 0 fallos; ms-carrito: 21 tests, 0
+      fallos (el módulo compila con la dependencia spring-kafka).
+    - docker compose config: archivo válido con los servicios "kafka"
+      (apache/kafka 3.9, modo KRaft, 127.0.0.1:9094) y "ms-monitoreo" (8086).
+    - La guía de presentación quedó escrita en KAFKA-MONITOREO.txt.
+    - PENDIENTE: el end-to-end con el broker real levantado (comprar y ver
+      el evento en GET /monitoreo/eventos); la receta exacta está en
+      KAFKA-MONITOREO.txt punto 7.
 
   NO VERIFICADO (falta configuración real, no del código):
     - Envío real de correos por SMTP: falta una app password en .env.
@@ -264,6 +308,12 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
            -H "Content-Type: application/json" -d "{\"estado\":\"EN_PREPARACION\"}"
       # luego "ENVIADO" y "ENTREGADO"; una transición inválida devuelve 400.
 
+  Para el monitoreo (Kafka), después de la compra:
+
+      curl http://localhost:8086/monitoreo/eventos
+      curl http://localhost:8086/monitoreo/estadisticas
+      docker compose logs -f ms-monitoreo   # muestra el evento y su offset
+
 
 6. LÍMITES QUE CONVIENE ACLARAR
 -------------------------------
@@ -275,6 +325,9 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
   - Sin credenciales SMTP no llegan correos: queda en la cola/reintentos/DLQ.
   - Por defecto la base es H2; en docker-compose usa volúmenes (carrito-data
     y pagos-data) para que pedidos y pagos sobrevivan a reinicios.
+  - ms-monitoreo guarda los eventos EN MEMORIA (ventana de 500): al
+    reiniciarse se pierde el histórico local y los contadores vuelven a 0;
+    el log completo queda igual en el tópico de Kafka.
 
 
 7. DESPLIEGUE EN AWS / CAMBIO DE TENANT (para Tomy)
@@ -284,11 +337,16 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
     - Sección 0.1: tabla ARCHIVO -> LÍNEA EXACTA donde pegar un client ID
       o tenant ID nuevos si Tomy crea su propio registro en Azure.
     - Secciones 1 a 4: Azure Portal, frontend, backend (CORS/issuer), EC2.
-    - Sección 5: checklist de verificación (login + compra + correo).
+    - Sección 5: checklist de verificación (login + compra + correo +
+      monitoreo con Kafka).
     - Sección 6: errores comunes (AADSTS50011, 401 invalid_token, CORS...).
+
+  Para la demo de monitoreo con Kafka: KAFKA-MONITOREO.txt (raíz del proyecto)
+    explica qué es Kafka, cómo funciona acá, la API del monitoreo, la receta
+    de verificación y un guion de presentación de 60 segundos.
 
   Archivos que contienen los IDs de Azure:
     pedidos360-frontend/src/environments/environment.prod.ts   (producción)
     pedidos360-frontend/src/environments/environment.ts        (local)
-    docker-compose.yml   (4 x AZURE_ISSUER_URI)   y   .env
-    ms-*/src/main/resources/application.yml       (issuer-uri por defecto)
+    docker-compose.yml   (6 x AZURE_ISSUER_URI)   y   .env
+    ms-*/src/main/resources/application.yml       (6 x issuer-uri por defecto)
