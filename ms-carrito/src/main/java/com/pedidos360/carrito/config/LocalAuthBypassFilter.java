@@ -39,7 +39,7 @@ public class LocalAuthBypassFilter extends OncePerRequestFilter {
                     .claim("oid", "00000000-0000-0000-0000-000000000001")
                     .claim("tid", "local")
                     .claim("name", "Usuario Local")
-                    .claim("preferred_username", "local@pedidos360.cl")
+                    .claim("preferred_username", "diegoxmegalala@gmail.com")
                     .issuedAt(ahora)
                     .expiresAt(ahora.plusSeconds(3600))
                     .build();

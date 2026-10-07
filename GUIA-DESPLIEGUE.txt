@@ -183,6 +183,28 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
 
       (Si cambian el tenant, ver el mapa 0.1.)
 
+ 2.3  *** pedidos360-frontend/src/environments/environment.docker.ts ***  (BUILD DE DOCKER, LOCAL)
+      Es el archivo que usa el build del contenedor frontend CUANDO el .env
+      tiene "NG_BUILD_CONFIG=docker". Sin esa variable, el build de Docker
+      usa environment.prod.ts (producción).
+
+      VENTAJA: no hace falta recompilar nada a mano; solo poner en el .env:
+          NG_BUILD_CONFIG=docker
+      para que el frontend en su maquina local use:
+          - login real con Microsoft Entra ID (authBypass: false),
+          - redirectUri http://localhost:4200/,
+          - URLs de localhost (18081/8082/8083) en vez del API Gateway.
+
+      Lineas a mirar (si cambia el tenant, ver el mapa 0.1):
+        - línea 7   authBypass   -> false = login real
+        - líneas 10-12 azureClientId / azureTenantId / azureApiScope
+        - línea 14  redirectUri  -> http://localhost:4200/
+        - líneas 18-20 apiProductosUrl / apiIdentidadUrl / apiCarritoUrl (localhost)
+
+      NOTA: el frontend en Docker publica "80:80" Y "4200:80" (docker-compose.yml)
+      para que localmente el login de Azure (que pide exactamente
+      http://localhost:4200/) funcione sin tocar nada.
+
 
 ===============================================================================
 3. ARCHIVOS DEL BACKEND A EDITAR
@@ -264,8 +286,14 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
                                     en la red de Docker (también en la línea 127
                                     de ms-monitoreo)
      [ ] Líneas 77-81  MAIL_* -> NO poner credenciales ahí; vienen del .env
-     [ ] Líneas 86-90  frontend -> build: ./pedidos360-frontend, puerto 80:80
+     [ ] Líneas 86-97  frontend -> build: ./pedidos360-frontend, puertos 80:80
+                                 y 4200:80 (el 4200 es para el login local de
+                                 Azure; en AWS alcanza con el 80)
                                  -> ver CHECKPOINT HTTPS (4.4)
+     [ ] Línea 94     NG_BUILD_CONFIG: ${NG_BUILD_CONFIG:-production}
+                                 -> NO tocar: sin .env compila producción
+                                    (environment.prod.ts). Con NG_BUILD_CONFIG=docker
+                                    (solo local) usa environment.docker.ts (2.3).
      [ ] Líneas 97-117 kafka (apache/kafka 3.9, KRaft, sin ZooKeeper)
                                  -> broker de monitoreo. El puerto 9094 ya está
                                     publicado SOLO en 127.0.0.1 (localhost);
@@ -300,7 +328,7 @@ ARCHIVO y LINEA POR LINEA donde pegar el client ID y el tenant ID nuevos.
        8084          (ms-email: no recibe tráfico público)
        8085          (ms-pagos: solo lo llama ms-carrito por la red de Docker)
        8086          (ms-monitoreo: consulta el broker por la red de Docker)
-       4200          (eso es el ng serve local, aquí no existe)
+       4200          (es la URI de login local de Azure: solo existe en local)
      Nota: el puerto 18081 es un mapeo SOLO local del compañero; en EC2 es
      el 8081 normal.
 

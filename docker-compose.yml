@@ -84,10 +84,22 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./pedidos360-frontend
+    build:
+      context: ./pedidos360-frontend
+      args:
+        # production = environment.prod.ts (login Azure + API Gateway, despliegue real).
+        # docker = environment.docker.ts (demo local: login real con MS, URLs localhost).
+        # Se elige por variable:
+        #   NG_BUILD_CONFIG=docker en .env => build para demo local (solo local).
+        NG_BUILD_CONFIG: ${NG_BUILD_CONFIG:-production}
     container_name: pedidos360-frontend
     ports:
       - "80:80"
+      - "4200:80" # local: http://localhost:4200 (redirectUri registrado en Azure)
+    depends_on:
+      - ms-productos
+      - ms-identidad
+      - ms-carrito
     restart: unless-stopped
 
   # Log de eventos de negocio para monitoreo (Kafka en modo KRaft: sin ZooKeeper).
@@ -102,7 +114,7 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER

@@ -1,5 +1,19 @@
 # CHANGELOG - Pedidos360
 
+## [1.6.0] - 2026-10-07 — Login real, correo Gmail y stack verificado end-to-end
+### Añadido
+- **`environment.docker.ts`** (nuevo): perfil de build para el contenedor frontend con **login real de Microsoft Entra ID** (`authBypass: false`), `redirectUri http://localhost:4200/` y URLs de localhost (18081/8082/8083). Se elige con la variable `NG_BUILD_CONFIG=docker` del `.env`.
+- **`NG_BUILD_CONFIG` en el frontend**: `Dockerfile` con `ARG NG_BUILD_CONFIG=production` y `docker-compose.yml` con `NG_BUILD_CONFIG: ${NG_BUILD_CONFIG:-production}`. Sin `.env` el build es de producción (`environment.prod.ts` = login + API Gateway) — listo para que Tomy suba a AWS sin cambios.
+- **Frontend en Docker publica `80:80` y `4200:80`**: el `4200` es la URI de redirección que Azure tiene registrada para pruebas locales y el login así funciona sin tocar nada.
+- **Fix de Kafka en modo KRaft**: `KAFKA_LISTENERS` sin IP (solo puerto) porque el modo KRaft de `apache/kafka:3.9.0` rechaza `0.0.0.0` como host no enrutable; ahora `ms-monitoreo` consume el tópico y el monitoreo queda end-to-end.
+- **Correo real por Gmail (SMTP) configurado**: credenciales solo en el `.env` (`.env.example` documenta `MAIL_USERNAME`/`MAIL_PASSWORD`/`MAIL_FROM`); verificado enviando 4 correos reales a `diegoxmegalala@gmail.com` (pedidos registrado/aprobado/rechazado), colas en 0.
+- `.env.example`, `ayuda.txt`, `GUIA-DESPLIEGUE.txt` y `README.md` actualizados con el nuevo build, los puertos 80/4200 y el estado real de lo verificado.
+
+### Verificado (2026-10-07, stack completo de 9 contenedores)
+- Kafka + monitoreo end-to-end: comprar → evento visible en `GET /monitoreo/eventos`.
+- Correos reales por SMTP Gmail vía RabbitMQ → `ms-email`.
+- Login real habilitado (backends devuelven 401 sin JWT; el frontend en 4200 con `authBypass: false` redirige al login de Microsoft).
+
 ## [1.5.0] - 2026-10-05 — Monitoreo con Kafka
 ### Añadido
 - **Kafka como log de eventos de negocio (monitoreo)**, en paralelo a RabbitMQ (que sigue siendo quien entrega los correos): el tópico `pedidos360.monitoreo` recibe los mismos 4 eventos que la cola (`PEDIDO_REGISTRADO`, `PAGO_APROBADO`, `PAGO_RECHAZADO`, `CAMBIO_ESTADO`) con clave = `pedidoId` para que todos los eventos de un pedido se escriban en la misma partición y se lean en orden.

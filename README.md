@@ -331,24 +331,30 @@ checkout `PENDIENTE_PAGO`, carrito vacío tras el checkout, **pago delegado en `
 rechazado con carrito restaurado y registro consultable en `GET /pagos/pedido/{id}`), pago doble → `400`,
 transiciones de estado y CORS con el origen desplegado.
 
-**Verificación con `docker compose up -d --build`** (2026-10-02, Docker Desktop + WSL2): en esa corrida eran
-7 contenedores (`rabbitmq`, los 5 microservicios y el frontend en nginx; **hoy el stack son 9**: se sumaron
-`kafka` y `ms-monitoreo`); el catálogo siembra 8 productos; la
+**Verificación con `docker compose up -d --build`** (Docker Desktop + WSL2, octubre): son 9 contenedores
+(`rabbitmq`, `kafka`, los 6 microservicios y el frontend en nginx); el catálogo siembra 8 productos; la
 compra corre completa sobre el stack aprobado (`CONFIRMADO` / `APROBADO` con registro en
 `GET /pagos/pedido/{id}`), el pago doble devuelve `400` y el pago rechazado deja `CANCELADO` / `RECHAZADO`
 con el carrito restaurado. RabbitMQ funciona end-to-end: `ms-carrito` publica y `ms-email` consume
 (4 publicados / 4 entregados) y, al no haber credenciales SMTP, agota los 3 reintentos y los mensajes caen
-en `pedidos360.emails.dlq`. El `ng serve` local (4200) quedó apuntando a estos mismos contenedores.
-También se verificó el modo degradado: con el broker caído los eventos se registran como error en el log y
-**la compra se completa igual**.
+en `pedidos360.emails.dlq`. También se verificó el modo degradado: con el broker caído los eventos se
+registran como error en el log y **la compra se completa igual**.
 
-**No se pudo verificar**: el envío real de correos por SMTP (falta una app password real en `.env`) y el
-login real con Microsoft Entra ID (requiere cuenta del tenant registrado).
+**Verificado con login real + Kafka + correo** (2026-10-07):
+- **Kafka + Monitoreo end-to-end**: `apache/kafka:3.9.0` en modo KRaft arriba y `ms-monitoreo` consumiendo
+  del tópico; `GET /monitoreo/eventos` y `GET /monitoreo/estadisticas` muestran `PEDIDO_REGISTRADO`,
+  `PAGO_APROBADO`, `PAGO_RECHAZADO` y `CAMBIO_ESTADO` producidos por una compra real sobre el stack.
+- **Correos reales por SMTP**: con la app password de Gmail en `.env`, `ms-email` envió 4 mensajes a
+  `diegoxmegalala@gmail.com` (registro, pago aprobado, registro y pago rechazado) y las colas quedaron en 0.
+- **Login de Microsoft optativo en local**: el frontend en Docker publica `http://localhost:4200`
+  (además del `80`) porque esa es la URI registrada en Azure; con `NG_BUILD_CONFIG=docker` en el `.env`
+  compila `environment.docker.ts` (login real + URLs localhost) y los backend exigen JWT (`401` sin token).
+  Sin `NG_BUILD_CONFIG` el build es de **producción** (`environment.prod.ts` = login + API Gateway).
 
 **Monitoreo con Kafka**: las 6 pruebas de `ms-monitoreo` y las 21 de `ms-carrito` están en verde y el
-`docker-compose.yml` (servicios `kafka` + `ms-monitoreo`) valida con `docker compose config`. **Pendiente de
-ejecutar** en la próxima corrida: el flujo end-to-end con el broker levantado (comprar y ver el evento en
-`GET /monitoreo/eventos`); la receta exacta está en `KAFKA-MONITOREO.txt` punto 7.
+`docker-compose.yml` (servicios `kafka` + `ms-monitoreo`) valida con `docker compose config`. El flujo
+end-to-end con el broker levantado quedó **verificado** el 2026-10-07: comprar en la página y ver el evento
+en `GET /monitoreo/eventos`; la receta exacta está en `KAFKA-MONITOREO.txt` punto 7.
 
 ## Limitaciones conocidas
 

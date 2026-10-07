@@ -15,12 +15,21 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
       copy .env.example .env        # y completar MAIL_* si se quieren correos
       docker compose up --build
 
-      Frontend:   http://localhost
+      Frontend:   http://localhost:4200   (también http://localhost)
+                  (el login con Microsoft Entra ID exige la URI
+                   http://localhost:4200/, registrada en Azure)
       RabbitMQ:   http://localhost:15672  (guest/guest)
       Monitoreo:  http://localhost:8086/monitoreo/eventos
                   http://localhost:8086/monitoreo/estadisticas
       (el stack levanta 9 contenedores: rabbitmq, kafka, los 6
        microservicios y el frontend)
+
+      Build del frontend (ver NG_BUILD_CONFIG en .env.example):
+        - Por defecto compila PRODUCCION (environment.prod.ts = login Azure
+          + API Gateway): es lo que usa Tomy al desplegar.
+        - Con NG_BUILD_CONFIG=docker en el .env compila environment.docker.ts
+          = login real de Microsoft pero con las URLs de localhost
+          (18081/8082/8083) en vez del API Gateway. Recomendado para la demo.
 
   Opción B — Sin Docker (procesos separados, pruebas locales):
 
@@ -252,7 +261,7 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
     - Los 4 eventos de correo se intentan publicar y, sin RabbitMQ,
       la compra NO falla (solo se registra el error en el log).
 
-  VERIFICADO CON docker compose up -d --build (2026-10-02, Docker Desktop + WSL2):
+  VERIFICADO CON docker compose up -d --build (Docker Desktop + WSL2, octubre):
     - Los 7 contenedores levantan: rabbitmq, los 5 microservicios y el
       frontend (nginx en http://localhost/), con catálogo sembrado (8 productos).
       (Esa corrida fue antes de sumar kafka y ms-monitoreo: hoy el stack
@@ -266,23 +275,39 @@ Código fuente: C:\Users\Sxtnix\Documents\cloud-testing-main
       (retry + dead-letter funcionando de punta a punta).
     - El ng serve local (4200) sigue sirviendo la app contra esos contenedores.
 
+  VERIFICADO — LOGIN REAL + KAFKA + CORREO (2026-10-07):
+    - Kafka arriba en modo KRaft y ms-monitoreo consumiendo eventos reales:
+      GET /monitoreo/eventos y /estadisticas muestran PEDIDO_REGISTRADO,
+      PAGO_APROBADO, PAGO_RECHAZADO, CAMBIO_ESTADO (compra end-to-end).
+    - Correo real Gmail vía RabbitMQ->SMTP: 4 mensajes enviados a
+      diegoxmegalala@gmail.com (app password en .env), colas en 0.
+    - Backends con AUTH_BYPASS=false exigen JWT (401 sin token) y el
+      frontend sirve http://localhost:4200 con authBypass: false => login
+      real con Microsoft Entra ID (redirectUri http://localhost:4200/).
+      Para probar SIN Azure: AUTH_BYPASS=true + authBypass: true (local).
+    - El frontend en Docker publica el 80 (y http://localhost:4200 que es la
+      URI que el login local de Azure tiene registrada); el build elige
+      environment.docker.ts (login real + URLs localhost) cuando el .env
+      tiene NG_BUILD_CONFIG=docker, y environment.prod.ts (API Gateway) por
+      defecto (producción, para Tomy).
+
   VERIFICADO — KAFKA + MONITOREO (2026-10-05):
     - mvn test ms-monitoreo: 6 tests, 0 fallos; ms-carrito: 21 tests, 0
       fallos (el módulo compila con la dependencia spring-kafka).
     - docker compose config: archivo válido con los servicios "kafka"
       (apache/kafka 3.9, modo KRaft, 127.0.0.1:9094) y "ms-monitoreo" (8086).
     - La guía de presentación quedó escrita en KAFKA-MONITOREO.txt.
-    - PENDIENTE: el end-to-end con el broker real levantado (comprar y ver
-      el evento en GET /monitoreo/eventos); la receta exacta está en
-      KAFKA-MONITOREO.txt punto 7.
+    - El end-to-end con el broker real quedó VERIFICADO el 2026-10-07:
+      comprar en la página/publicar eventos y verlos en GET /monitoreo/eventos.
 
   NO VERIFICADO (falta configuración real, no del código):
-    - Envío real de correos por SMTP: falta una app password en .env.
-    - Login real con Microsoft Entra ID: la app MSAL quedó configurada
-      (client/tenant/scope en src/environments/environment*.ts) pero no se
-      pudo ejecutar el flujo en esta máquina: requiere cuenta del tenant
-      registrado y la URI http://localhost:4200/ en Azure. El modo sin Azure
-      (AUTH_BYPASS=true) sí está probado.
+    - Envío real de correos por SMTP: quedó VERIFICADO el 2026-10-07 con la
+      app password de diegoxmegalala@gmail.com en .env.
+    - Login real con Microsoft Entra ID: pendiente de ejecutar el flujo en el
+      navegador con una cuenta del tenant 9150f81f-... (exige la URI
+      http://localhost:4200/ registrada en Azure, que ya está). El frontend
+      queda con authBypass: false (login real) en environment.docker.ts y
+      environment.prod.ts.
     - Aislamiento entre usuarios por HTTP: probado con pruebas unitarias
       (AccessDeniedException), ya que el modo local usa un único usuario sintético.
 
